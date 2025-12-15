@@ -593,7 +593,22 @@ export class GitHubService {
       const token = await this.getStoredToken();
 
       if (!token) {
-        // No stored token, user needs to authenticate
+        // Fall back to gh CLI session: if logged in, fetch and persist token
+        try {
+          const status = await execAsync('gh auth status');
+          if (status?.stdout && status.stdout.toLowerCase().includes('logged in')) {
+            const { stdout: tokenOut } = await execAsync('gh auth token');
+            const cliToken = String(tokenOut || '').trim();
+            if (cliToken) {
+              await this.storeToken(cliToken);
+              return true;
+            }
+          }
+        } catch (e) {
+          // CLI not logged in or missing; treat as unauthenticated
+          return false;
+        }
+        // No stored token and CLI not logged in
         return false;
       }
 
