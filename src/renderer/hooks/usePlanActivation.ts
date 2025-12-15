@@ -12,8 +12,9 @@ export function usePlanActivationTerminal(opts: {
   providerId: string;
   workspaceId: string;
   workspacePath: string;
+  ptyId?: string;
 }) {
-  const { enabled, providerId, workspaceId, workspacePath } = opts;
+  const { enabled, providerId, workspaceId, workspacePath, ptyId } = opts;
 
   useEffect(() => {
     if (!enabled) return;
@@ -22,16 +23,16 @@ export function usePlanActivationTerminal(opts: {
     const cmd = meta.planActivate;
     if (!cmd) return;
 
-    const ptyId = `${providerId}-main-${workspaceId}`;
-    const onceKey = `plan:activated:${ptyId}`;
+    const targetId = ptyId || `${providerId}-main-${workspaceId}`;
+    const onceKey = `plan:activated:${targetId}`;
     try {
       if (localStorage.getItem(onceKey) === '1') return;
     } catch {}
 
     const send = async () => {
       try {
-        log.info('[plan] activating native plan mode', { providerId, ptyId, cmd });
-        (window as any).electronAPI?.ptyInput?.({ id: ptyId, data: `${cmd}\n` });
+        log.info('[plan] activating native plan mode', { providerId, ptyId: targetId, cmd });
+        (window as any).electronAPI?.ptyInput?.({ id: targetId, data: `${cmd}\n` });
         try {
           localStorage.setItem(onceKey, '1');
         } catch {}
@@ -41,7 +42,7 @@ export function usePlanActivationTerminal(opts: {
 
     // Prefer waiting until PTY session has started
     const off = (window as any).electronAPI?.onPtyStarted?.((info: { id: string }) => {
-      if (info?.id === ptyId) void send();
+      if (info?.id === targetId) void send();
     });
 
     // Fallback: if PTY already started, send after a short delay
@@ -53,5 +54,5 @@ export function usePlanActivationTerminal(opts: {
       } catch {}
       clearTimeout(t);
     };
-  }, [enabled, providerId, workspaceId]);
+  }, [enabled, providerId, workspaceId, ptyId]);
 }

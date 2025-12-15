@@ -4,7 +4,7 @@ import { FolderOpen } from 'lucide-react';
 import LeftSidebar from './components/LeftSidebar';
 import ProjectMainView from './components/ProjectMainView';
 import WorkspaceModal from './components/WorkspaceModal';
-import ChatInterface from './components/ChatInterface';
+import WorkspaceChats from './components/WorkspaceChats';
 import MultiAgentWorkspace from './components/MultiAgentWorkspace';
 import { Toaster } from './components/ui/toaster';
 import useUpdateNotifier from './hooks/useUpdateNotifier';
@@ -125,7 +125,6 @@ const AppContent: React.FC = () => {
   const [showHomeView, setShowHomeView] = useState<boolean>(true);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState<boolean>(false);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
-  const [activeWorkspaceProvider, setActiveWorkspaceProvider] = useState<Provider | null>(null);
   const [installedProviders, setInstalledProviders] = useState<Record<string, boolean>>({});
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
@@ -1121,14 +1120,6 @@ const AppContent: React.FC = () => {
 
         // Set the active workspace and its provider (none if multi-agent)
         setActiveWorkspace(newWorkspace);
-        if ((newWorkspace.metadata as any)?.multiAgent?.enabled) {
-          setActiveWorkspaceProvider(null);
-        } else {
-          // Use the saved agentId from the workspace, which should match primaryProvider
-          setActiveWorkspaceProvider(
-            (newWorkspace.agentId as Provider) || primaryProvider || 'codex'
-          );
-        }
       }
     } catch (error) {
       const { log } = await import('./lib/logger');
@@ -1158,12 +1149,7 @@ const AppContent: React.FC = () => {
     setActiveWorkspace(workspace);
     // Load provider from workspace.agentId if it exists, otherwise default to null
     // This ensures the selected provider persists across app restarts
-    if ((workspace.metadata as any)?.multiAgent?.enabled) {
-      setActiveWorkspaceProvider(null);
-    } else {
-      // Use agentId from workspace if available, otherwise fall back to 'codex' for backwards compatibility
-      setActiveWorkspaceProvider((workspace.agentId as Provider) || 'codex');
-    }
+    // No-op for provider; per-chat tabs handle provider selection now.
   };
 
   const handleStartCreateWorkspaceFromSidebar = useCallback(
@@ -1195,7 +1181,6 @@ const AppContent: React.FC = () => {
 
     if (wasActive) {
       setActiveWorkspace(null);
-      setActiveWorkspaceProvider(null);
     }
   };
 
@@ -1569,11 +1554,10 @@ const AppContent: React.FC = () => {
                 projectId={selectedProject.id}
               />
             ) : (
-              <ChatInterface
+              <WorkspaceChats
                 workspace={activeWorkspace}
                 projectName={selectedProject.name}
-                className="min-h-0 flex-1"
-                initialProvider={activeWorkspaceProvider || undefined}
+                projectId={selectedProject.id}
               />
             )
           ) : (

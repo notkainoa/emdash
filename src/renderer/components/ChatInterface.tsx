@@ -36,6 +36,9 @@ interface Props {
   projectName: string;
   className?: string;
   initialProvider?: Provider;
+  conversationId?: string | null;
+  onProviderChange?: (provider: Provider) => void;
+  allowInitialInjection?: boolean;
 }
 
 const ChatInterface: React.FC<Props> = ({
@@ -43,6 +46,9 @@ const ChatInterface: React.FC<Props> = ({
   projectName: _projectName,
   className,
   initialProvider,
+  conversationId,
+  onProviderChange,
+  allowInitialInjection = true,
 }) => {
   const { toast } = useToast();
   const { effectiveTheme } = useTheme();
@@ -58,7 +64,14 @@ const ChatInterface: React.FC<Props> = ({
     getContainerRunState(workspace.id)
   );
   const reduceMotion = useReducedMotion();
-  const terminalId = useMemo(() => `${provider}-main-${workspace.id}`, [provider, workspace.id]);
+  const conversationKey = useMemo(
+    () => (conversationId && conversationId.trim().length ? conversationId : workspace.id),
+    [conversationId, workspace.id]
+  );
+  const terminalId = useMemo(
+    () => `${provider}-main-${conversationKey}--${workspace.id}`,
+    [provider, conversationKey, workspace.id]
+  );
   const [portsExpanded, setPortsExpanded] = useState(false);
   const { activeTerminalId } = useWorkspaceTerminals(workspace.id, workspace.path);
 
@@ -82,6 +95,7 @@ const ChatInterface: React.FC<Props> = ({
     providerId: provider,
     workspaceId: workspace.id,
     workspacePath: workspace.path,
+    ptyId: terminalId,
   });
 
   useEffect(() => {
@@ -179,7 +193,7 @@ const ChatInterface: React.FC<Props> = ({
   // If a locked provider exists (including Droid), prefer locked.
   useEffect(() => {
     try {
-      const lastKey = `provider:last:${workspace.id}`;
+      const lastKey = `provider:last:${conversationKey}`;
       const last = window.localStorage.getItem(lastKey) as Provider | null;
 
       if (initialProvider) {
@@ -204,20 +218,25 @@ const ChatInterface: React.FC<Props> = ({
         if (last && (validProviders as string[]).includes(last)) {
           setProvider(last as Provider);
         } else {
-          setProvider('codex');
+          setProvider((workspace.agentId as Provider) || 'codex');
         }
       }
     } catch {
-      setProvider(initialProvider || 'codex');
+      setProvider(initialProvider || (workspace.agentId as Provider) || 'codex');
     }
-  }, [workspace.id, initialProvider]);
+  }, [conversationKey, initialProvider, workspace.agentId]);
 
   // Persist last-selected provider per workspace (including Droid)
   useEffect(() => {
     try {
-      window.localStorage.setItem(`provider:last:${workspace.id}`, provider);
+      window.localStorage.setItem(`provider:last:${conversationKey}`, provider);
+      window.localStorage.setItem(`workspaceProvider:${workspace.id}`, provider);
     } catch {}
-  }, [provider, workspace.id]);
+  }, [provider, conversationKey, workspace.id]);
+
+  useEffect(() => {
+    onProviderChange?.(provider);
+  }, [onProviderChange, provider]);
 
   // Track provider switching
   const prevProviderRef = React.useRef<Provider | null>(null);
@@ -354,7 +373,7 @@ const ChatInterface: React.FC<Props> = ({
   const isTerminal = providerMeta[provider]?.terminalOnly === true;
 
   const initialInjection = useMemo(() => {
-    if (!isTerminal) return null;
+    if (!isTerminal || !allowInitialInjection) return null;
     const md = workspace.metadata || null;
     const p = (md?.initialPrompt || '').trim();
     if (p) return p;
@@ -450,7 +469,9 @@ const ChatInterface: React.FC<Props> = ({
     workspaceId: workspace.id,
     providerId: provider,
     prompt: initialInjection,
-    enabled: isTerminal && providerMeta[provider]?.initialPromptFlag === undefined,
+    enabled:
+      allowInitialInjection && isTerminal && providerMeta[provider]?.initialPromptFlag === undefined,
+    ptyId: terminalId,
   });
 
   // Ensure a provider is stored for this workspace so fallbacks can subscribe immediately
@@ -702,6 +723,7 @@ const ChatInterface: React.FC<Props> = ({
               id={terminalId}
               cwd={workspace.path}
               shell={providerMeta[provider].cli}
+              autoApprove={workspace.metadata?.autoApprove ?? false}
               env={
                 planEnabled
                   ? {
@@ -713,7 +735,7 @@ const ChatInterface: React.FC<Props> = ({
               keepAlive={true}
               onActivity={() => {
                 try {
-                  window.localStorage.setItem(`provider:locked:${workspace.id}`, provider);
+                  window.localStorage.setItem(`provider:locked:${conversationKey}`, provider);
                 } catch {}
               }}
               onStartError={() => {
@@ -746,6 +768,7 @@ const ChatInterface: React.FC<Props> = ({
                   : undefined
               }
               initialPrompt={
+                allowInitialInjection &&
                 providerMeta[provider]?.initialPromptFlag !== undefined &&
                 !workspace.metadata?.initialInjectionSent
                   ? (initialInjection ?? undefined)
@@ -771,6 +794,8 @@ const ChatInterface: React.FC<Props> = ({
           } catch {}
           setPlanEnabled(false);
         }}
+        ptyId={terminalId}
+        autoApprove={workspace.metadata?.autoApprove ?? false}
       />
     </div>
   );

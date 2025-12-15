@@ -14,7 +14,7 @@ export interface RightSidebarWorkspace {
   branch: string;
   path: string;
   status: 'active' | 'idle' | 'running';
-  agentId?: string;
+  agentId?: string | null;
   metadata?: any;
 }
 

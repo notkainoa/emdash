@@ -1,5 +1,5 @@
 import type { Workspace as ChatWorkspace } from './chat';
-export type Workspace = ChatWorkspace & { agentId?: string };
+export type Workspace = ChatWorkspace & { agentId?: string | null };
 
 export interface Project {
   id: string;

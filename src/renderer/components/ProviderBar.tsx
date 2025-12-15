@@ -44,6 +44,7 @@ type Props = {
   onPlanModeChange?: (next: boolean) => void;
   onApprovePlan?: () => void;
   autoApprove?: boolean;
+  ptyId?: string;
 };
 
 export const ProviderBar: React.FC<Props> = ({
@@ -56,6 +57,7 @@ export const ProviderBar: React.FC<Props> = ({
   onPlanModeChange,
   onApprovePlan,
   autoApprove,
+  ptyId,
 }) => {
   const [c7Enabled, setC7Enabled] = React.useState<boolean>(false);
   const [c7Busy, setC7Busy] = React.useState<boolean>(false);
@@ -101,8 +103,8 @@ export const ProviderBar: React.FC<Props> = ({
         const isTerminal = providerMeta[provider]?.terminalOnly === true;
         if (!isTerminal) return;
         const phrase = getContext7InvocationForProvider(provider) || 'use context7';
-        const ptyId = `${provider}-main-${workspaceId}`;
-        (window as any).electronAPI?.ptyInput?.({ id: ptyId, data: `${phrase}\n` });
+        const targetId = ptyId || `${provider}-main-${workspaceId}`;
+        (window as any).electronAPI?.ptyInput?.({ id: targetId, data: `${phrase}\n` });
       } else {
         try {
           localStorage.removeItem(`c7:ws:${workspaceId}`);

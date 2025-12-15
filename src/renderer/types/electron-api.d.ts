@@ -115,6 +115,10 @@ declare global {
         listener: (info: { exitCode: number; signal?: number }) => void
       ) => () => void;
       onPtyStarted: (listener: (data: { id: string }) => void) => () => void;
+      onPtyActivity: (listener: (info: { id: string; chunk?: string }) => void) => () => void;
+      onPtyExitGlobal: (
+        listener: (info: { id: string; exitCode?: number | null; signal?: number }) => void
+      ) => () => void;
       terminalGetTheme: () => Promise<{
         ok: boolean;
         config?: {
@@ -578,13 +582,20 @@ declare global {
       deleteWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
 
       // Message operations
+      saveConversation: (conversation: any) => Promise<{ success: boolean; error?: string }>;
       saveMessage: (message: any) => Promise<{ success: boolean; error?: string }>;
+      getConversations: (
+        workspaceId: string
+      ) => Promise<{ success: boolean; conversations?: any[]; error?: string }>;
       getMessages: (
         conversationId: string
       ) => Promise<{ success: boolean; messages?: any[]; error?: string }>;
       getOrCreateDefaultConversation: (
         workspaceId: string
       ) => Promise<{ success: boolean; conversation?: any; error?: string }>;
+      deleteConversation: (
+        conversationId: string
+      ) => Promise<{ success: boolean; error?: string }>;
 
       // Debug helpers
       debugAppendLog: (
@@ -638,6 +649,10 @@ export interface ElectronAPI {
     listener: (info: { exitCode: number; signal?: number }) => void
   ) => () => void;
   onPtyStarted: (listener: (data: { id: string }) => void) => () => void;
+  onPtyActivity: (listener: (info: { id: string; chunk?: string }) => void) => () => void;
+  onPtyExitGlobal: (
+    listener: (info: { id: string; exitCode?: number | null; signal?: number }) => void
+  ) => () => void;
 
   // Worktree management
   worktreeCreate: (args: {
@@ -905,13 +920,20 @@ export interface ElectronAPI {
   deleteWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Message operations
+  saveConversation: (conversation: any) => Promise<{ success: boolean; error?: string }>;
   saveMessage: (message: any) => Promise<{ success: boolean; error?: string }>;
+  getConversations: (
+    workspaceId: string
+  ) => Promise<{ success: boolean; conversations?: any[]; error?: string }>;
   getMessages: (
     conversationId: string
   ) => Promise<{ success: boolean; messages?: any[]; error?: string }>;
   getOrCreateDefaultConversation: (
     workspaceId: string
   ) => Promise<{ success: boolean; conversation?: any; error?: string }>;
+  deleteConversation: (
+    conversationId: string
+  ) => Promise<{ success: boolean; error?: string }>;
 
   // Debug helpers
   debugAppendLog: (

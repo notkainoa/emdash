@@ -11,8 +11,9 @@ export function useInitialPromptInjection(opts: {
   providerId: string; // codex | claude | ... used for PTY id prefix
   prompt?: string | null;
   enabled?: boolean;
+  ptyId?: string;
 }) {
-  const { workspaceId, providerId, prompt, enabled = true } = opts;
+  const { workspaceId, providerId, prompt, enabled = true, ptyId } = opts;
 
   useEffect(() => {
     if (!enabled) return;
@@ -21,20 +22,20 @@ export function useInitialPromptInjection(opts: {
     const sentKey = initialPromptSentKey(workspaceId, providerId);
     if (localStorage.getItem(sentKey) === '1') return;
 
-    const ptyId = `${providerId}-main-${workspaceId}`;
+    const targetId = ptyId || `${providerId}-main-${workspaceId}`;
     let sent = false;
     let idleSeen = false;
     let silenceTimer: any = null;
     const send = () => {
       try {
         if (sent) return;
-        (window as any).electronAPI?.ptyInput?.({ id: ptyId, data: trimmed + '\n' });
+        (window as any).electronAPI?.ptyInput?.({ id: targetId, data: trimmed + '\n' });
         localStorage.setItem(sentKey, '1');
         sent = true;
       } catch {}
     };
 
-    const offData = (window as any).electronAPI?.onPtyData?.(ptyId, (chunk: string) => {
+    const offData = (window as any).electronAPI?.onPtyData?.(targetId, (chunk: string) => {
       // Debounce-based idle: send after a short period of silence
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
@@ -53,7 +54,7 @@ export function useInitialPromptInjection(opts: {
       }
     });
     const offStarted = (window as any).electronAPI?.onPtyStarted?.((info: { id: string }) => {
-      if (info?.id === ptyId) {
+      if (info?.id === targetId) {
         // Start a silence timer in case no output arrives (rare but possible)
         if (silenceTimer) clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
@@ -71,5 +72,5 @@ export function useInitialPromptInjection(opts: {
       offStarted?.();
       offData?.();
     };
-  }, [enabled, workspaceId, providerId, prompt]);
+  }, [enabled, workspaceId, providerId, prompt, ptyId]);
 }

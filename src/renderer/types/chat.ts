@@ -45,6 +45,7 @@ export interface Workspace {
   branch: string;
   path: string;
   status: 'active' | 'idle' | 'running';
+  agentId?: string | null;
   metadata?: WorkspaceMetadata | null;
 }
 
