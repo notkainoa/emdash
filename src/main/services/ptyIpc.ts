@@ -12,6 +12,17 @@ const owners = new Map<string, WebContents>();
 const listeners = new Set<string>();
 const providerPtyTimers = new Map<string, number>();
 
+function broadcast(channel: string, payload: any) {
+  try {
+    const windows = BrowserWindow.getAllWindows();
+    windows.forEach((w) => {
+      try {
+        w.webContents.send(channel, payload);
+      } catch {}
+    });
+  } catch {}
+}
+
 export function registerPtyIpc(): void {
   ipcMain.handle(
     'pty:start',
@@ -56,6 +67,7 @@ export function registerPtyIpc(): void {
         if (!listeners.has(id)) {
           proc.onData((data) => {
             owners.get(id)?.send(`pty:data:${id}`, data);
+            broadcast('pty:activity', { id, chunk: data });
           });
 
           proc.onExit(({ exitCode, signal }) => {
@@ -63,6 +75,7 @@ export function registerPtyIpc(): void {
             maybeMarkProviderFinish(id, exitCode, signal);
             owners.delete(id);
             listeners.delete(id);
+            broadcast('pty:exit-global', { id, exitCode, signal });
           });
           listeners.add(id);
         }

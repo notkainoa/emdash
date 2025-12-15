@@ -76,6 +76,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(channel, wrapped);
     return () => ipcRenderer.removeListener(channel, wrapped);
   },
+  onPtyActivity: (listener: (info: { id: string; chunk?: string }) => void) => {
+    const channel = 'pty:activity';
+    const wrapped = (_: Electron.IpcRendererEvent, data: { id: string; chunk?: string }) =>
+      listener(data);
+    ipcRenderer.on(channel, wrapped);
+    return () => ipcRenderer.removeListener(channel, wrapped);
+  },
+  onPtyExitGlobal: (listener: (info: { id: string; exitCode?: number | null; signal?: number }) => void) => {
+    const channel = 'pty:exit-global';
+    const wrapped = (
+      _: Electron.IpcRendererEvent,
+      data: { id: string; exitCode?: number | null; signal?: number }
+    ) => listener(data);
+    ipcRenderer.on(channel, wrapped);
+    return () => ipcRenderer.removeListener(channel, wrapped);
+  },
   terminalGetTheme: () => ipcRenderer.invoke('terminal:getTheme'),
 
   // App settings
