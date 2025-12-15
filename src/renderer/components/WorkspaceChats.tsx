@@ -13,6 +13,7 @@ import { providerAssets } from '@/providers/assets';
 import { providerMeta } from '@/providers/meta';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ToastAction } from './ui/toast';
+import { terminalSessionRegistry } from '../terminal/SessionRegistry';
 
 type Conversation = {
   id: string;
@@ -96,6 +97,7 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
       try {
         window.electronAPI.ptyKill(ptyId);
         await window.electronAPI.ptyClearSnapshot({ id: ptyId });
+        terminalSessionRegistry.dispose(ptyId);
       } catch {}
       try {
         await window.electronAPI.deleteConversation(pending.conversation.id);
@@ -178,17 +180,13 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
         const match = saved && list.find((c) => c.id === saved);
         const idToUse = match ? match.id : list[0].id;
         setActiveId(idToUse);
-        // Seed provider cache for the default chat
-        if (idToUse && !providers[idToUse]) {
-          handleProviderChange(idToUse, ((workspace.agentId as Provider) || 'codex') as Provider);
-        }
       } else {
         setActiveId(null);
       }
     } finally {
       setLoading(false);
     }
-  }, [handleProviderChange, providers, workspace.agentId, workspace.id]);
+  }, [workspace.id]);
 
   useEffect(() => {
     void loadConversations();

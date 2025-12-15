@@ -1220,19 +1220,42 @@ const AppContent: React.FC = () => {
             }
           } catch {}
         } catch {}
+        let conversationIds: string[] = [];
+        try {
+          const convRes = await window.electronAPI.getConversations(workspace.id);
+          if (convRes?.success && Array.isArray(convRes.conversations)) {
+            conversationIds = convRes.conversations
+              .map((c: any) => c?.id)
+              .filter((id): id is string => typeof id === 'string' && id.length > 0);
+          }
+        } catch {}
         try {
           window.electronAPI.ptyKill?.(`workspace-${workspace.id}`);
         } catch {}
         try {
-          for (const provider of TERMINAL_PROVIDER_IDS) {
+          const baseIds = [
+            `workspace-${workspace.id}`,
+            ...TERMINAL_PROVIDER_IDS.map((provider) => `${provider}-main-${workspace.id}`),
+          ];
+          const conversationSessionIds = conversationIds.flatMap((conversationId) =>
+            TERMINAL_PROVIDER_IDS.map(
+              (provider) => `${provider}-main-${conversationId}--${workspace.id}`
+            )
+          );
+          for (const sessionId of [...baseIds, ...conversationSessionIds]) {
             try {
-              window.electronAPI.ptyKill?.(`${provider}-main-${workspace.id}`);
+              window.electronAPI.ptyKill?.(sessionId);
             } catch {}
           }
         } catch {}
         const sessionIds = [
           `workspace-${workspace.id}`,
           ...TERMINAL_PROVIDER_IDS.map((provider) => `${provider}-main-${workspace.id}`),
+          ...conversationIds.flatMap((conversationId) =>
+            TERMINAL_PROVIDER_IDS.map(
+              (provider) => `${provider}-main-${conversationId}--${workspace.id}`
+            )
+          ),
         ];
 
         await Promise.allSettled(
