@@ -32,7 +32,7 @@ interface Props {
   projectId: string;
 }
 
-function makeTerminalId(provider: Provider, conversationId: string, workspaceId: string) {
+export function makeTerminalId(provider: Provider, conversationId: string, workspaceId: string) {
   const base = `${conversationId}--${workspaceId}`;
   return `${provider}-main-${base}`;
 }
@@ -385,8 +385,18 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
           if (signal === 'busy') {
             busySince.set(conv.id, Date.now());
             setBusy(conv.id, true);
+            const prev = timers.get(conv.id);
+            if (prev) clearTimeout(prev);
+            const t = setTimeout(() => handleIdle(conv.id), CLEAR_BUSY_MS);
+            timers.set(conv.id, t);
           } else if (signal === 'idle') {
             handleIdle(conv.id);
+          } else if (busySince.has(conv.id)) {
+            // Neutral output: arm a soft clear to avoid stuck spinners when no idle cue arrives
+            const prev = timers.get(conv.id);
+            if (prev) clearTimeout(prev);
+            const t = setTimeout(() => handleIdle(conv.id), CLEAR_BUSY_MS);
+            timers.set(conv.id, t);
           }
         } catch {}
       });
