@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import ChatInterface from './ChatInterface';
 import { Button } from './ui/button';
@@ -12,6 +12,7 @@ import type { Provider } from '../types';
 import { providerAssets } from '@/providers/assets';
 import { providerMeta } from '@/providers/meta';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { ToastAction } from './ui/toast';
 
 type Conversation = {
   id: string;
@@ -22,6 +23,7 @@ type Conversation = {
 
 const MAX_TABS = 8;
 const WARN_THRESHOLD = 3; // show toast when creating the 4th tab
+const UNDO_DELETE_MS = 6000;
 
 interface Props {
   workspace: Workspace;
@@ -45,6 +47,13 @@ function nextChatTitle(existing: Conversation[]) {
   return `Chat ${maxNum + 1}`;
 }
 
+type PendingDelete = {
+  token: string;
+  conversation: Conversation;
+  provider: Provider;
+  prevIndex: number;
+};
+
 const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _projectId }) => {
   const { toast } = useToast();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -52,6 +61,10 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
   const [providers, setProviders] = useState<Record<string, Provider>>({});
   const [busyMap, setBusyMap] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
+  const pendingDeleteRef = useRef<{
+    pending: PendingDelete;
+    timer: ReturnType<typeof setTimeout> | null;
+  } | null>(null);
   const providerOptions = useMemo(() => Object.keys(providerMeta) as Provider[], []);
 
   const handleProviderChange = useCallback((conversationId: string, provider: Provider) => {
@@ -60,6 +73,66 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
       return { ...prev, [conversationId]: provider };
     });
   }, []);
+
+  const restoreConversation = useCallback(
+    (pending: PendingDelete) => {
+      handleProviderChange(pending.conversation.id, pending.provider);
+      setConversations((prev) => {
+        if (prev.some((c) => c.id === pending.conversation.id)) return prev;
+        const next = [...prev];
+        const idx = Math.min(Math.max(pending.prevIndex, 0), next.length);
+        next.splice(idx, 0, pending.conversation);
+        return next;
+      });
+      setActiveId(pending.conversation.id);
+    },
+    [handleProviderChange]
+  );
+
+  const finalizeConversationDelete = useCallback(
+    async (pending: PendingDelete, opts?: { allowStateUpdates?: boolean }) => {
+      const allowStateUpdates = opts?.allowStateUpdates ?? true;
+      const ptyId = makeTerminalId(pending.provider, pending.conversation.id, workspace.id);
+      try {
+        window.electronAPI.ptyKill(ptyId);
+        await window.electronAPI.ptyClearSnapshot({ id: ptyId });
+      } catch {}
+      try {
+        await window.electronAPI.deleteConversation(pending.conversation.id);
+      } catch (error: any) {
+        if (allowStateUpdates) {
+          restoreConversation(pending);
+          toast({
+            title: 'Failed to delete chat',
+            description: error?.message || 'Unknown error',
+            variant: 'destructive',
+          });
+        }
+        return;
+      }
+
+      if (allowStateUpdates) {
+        setProviders((prev) => {
+          if (!(pending.conversation.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[pending.conversation.id];
+          return next;
+        });
+        setBusyMap((prev) => {
+          if (!(pending.conversation.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[pending.conversation.id];
+          return next;
+        });
+      }
+
+      try {
+        localStorage.removeItem(`provider:last:${pending.conversation.id}`);
+        localStorage.removeItem(`provider:locked:${pending.conversation.id}`);
+      } catch {}
+    },
+    [restoreConversation, toast, workspace.id]
+  );
 
   const loadConversations = useCallback(async () => {
     setLoading(true);
@@ -190,20 +263,24 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
 
   const handleDelete = useCallback(
     async (conversation: Conversation) => {
-      const provider = getProviderForConversation(conversation.id);
-      const ptyId = makeTerminalId(provider, conversation.id, workspace.id);
-      try {
-        window.electronAPI.ptyKill(ptyId);
-        await window.electronAPI.ptyClearSnapshot({ id: ptyId });
-      } catch {}
-      try {
-        await window.electronAPI.deleteConversation(conversation.id);
-      } catch (error: any) {
-        toast({
-          title: 'Failed to delete chat',
-          description: error?.message || 'Unknown error',
-        });
+      const previousPending = pendingDeleteRef.current?.pending || null;
+      const previousTimer = pendingDeleteRef.current?.timer || null;
+      if (previousTimer) clearTimeout(previousTimer);
+      pendingDeleteRef.current = null;
+      if (previousPending) {
+        await finalizeConversationDelete(previousPending);
       }
+
+      const provider = getProviderForConversation(conversation.id);
+      const prevIndex = conversations.findIndex((c) => c.id === conversation.id);
+      const token = `${conversation.id}:${Date.now()}`;
+      const pending: PendingDelete = {
+        token,
+        conversation,
+        provider,
+        prevIndex: prevIndex >= 0 ? prevIndex : 0,
+      };
+
       setConversations((prev) => {
         const next = prev.filter((c) => c.id !== conversation.id);
         if (activeId === conversation.id) {
@@ -212,13 +289,59 @@ const WorkspaceChats: React.FC<Props> = ({ workspace, projectName, projectId: _p
         return next;
       });
       setBusyMap((prev) => {
+        if (!(conversation.id in prev)) return prev;
         const next = { ...prev };
         delete next[conversation.id];
         return next;
       });
+
+      const t = setTimeout(() => {
+        if (pendingDeleteRef.current?.pending.token !== token) return;
+        pendingDeleteRef.current = null;
+        void finalizeConversationDelete(pending);
+      }, UNDO_DELETE_MS);
+      pendingDeleteRef.current = { pending, timer: t };
+
+      toast({
+        title: 'Chat deleted',
+        description: conversation.title,
+        action: (
+          <ToastAction
+            altText="Undo delete"
+            onClick={() => {
+              if (pendingDeleteRef.current?.pending.token !== token) return;
+              const timer = pendingDeleteRef.current?.timer;
+              if (timer) clearTimeout(timer);
+              pendingDeleteRef.current = null;
+              restoreConversation(pending);
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
-    [activeId, conversations, getProviderForConversation, toast, workspace.id]
+    [
+      activeId,
+      conversations,
+      finalizeConversationDelete,
+      getProviderForConversation,
+      restoreConversation,
+      toast,
+    ]
   );
+
+  useEffect(() => {
+    return () => {
+      const pending = pendingDeleteRef.current?.pending || null;
+      const t = pendingDeleteRef.current?.timer || null;
+      if (t) clearTimeout(t);
+      pendingDeleteRef.current = null;
+      if (pending) {
+        void finalizeConversationDelete(pending, { allowStateUpdates: false });
+      }
+    };
+  }, [finalizeConversationDelete]);
 
   useEffect(() => {
     if (!conversations.length) {
