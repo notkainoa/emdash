@@ -592,14 +592,32 @@ export class GitHubService {
     try {
       const token = await this.getStoredToken();
 
-      if (!token) {
-        // No stored token, user needs to authenticate
-        return false;
+      if (token) {
+        const user = await this.getUserInfo(token);
+        if (user) {
+          return true;
+        }
       }
 
-      // Test the token by making a simple API call
-      const user = await this.getUserInfo(token);
-      return !!user;
+      // Fall back to GitHub CLI login state if no (or invalid) stored token
+      try {
+        const { stdout: statusStdout } = await execAsync('gh auth status');
+
+        if (statusStdout?.includes('Logged in')) {
+          const { stdout: tokenStdout } = await execAsync('gh auth token');
+          const cliToken = tokenStdout?.trim();
+
+          if (cliToken) {
+            await this.storeToken(cliToken);
+          }
+
+          return true;
+        }
+      } catch (cliError) {
+        console.warn('GitHub CLI auth check failed:', cliError);
+      }
+
+      return false;
     } catch (error) {
       console.error('Authentication check failed:', error);
       return false;
