@@ -586,47 +586,10 @@ export class GitHubService {
   }
 
   /**
-   * Check if GitHub CLI is authenticated and store the token if available
-   */
-  private async isCliAuthenticated(): Promise<boolean> {
-    try {
-      const result = await execAsync('gh auth status', { encoding: 'utf8' });
-      const output = `${String(result.stdout)}\n${String(result.stderr)}`;
-      const isLoggedIn = output.includes('Logged in') || output.includes('✓');
-
-      if (isLoggedIn) {
-        try {
-          // Try to get the token from CLI and store it
-          const tokenResult = await execAsync('gh auth token', { encoding: 'utf8' });
-          const token = String(tokenResult.stdout).trim();
-          if (token && (token.startsWith('gho_') || token.startsWith('ghp_'))) {
-            // Store the token for future use
-            const keytar = (await import('keytar')).default;
-            await keytar.setPassword(this.SERVICE_NAME, this.ACCOUNT_NAME, token);
-          }
-        } catch (tokenError) {
-          // Still authenticated even if we can't get the token
-          console.warn('Could not retrieve CLI token:', tokenError);
-        }
-      }
-
-      return isLoggedIn;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  /**
    * Check if user is authenticated
    */
   async isAuthenticated(): Promise<boolean> {
     try {
-      // First check if CLI is authenticated
-      const cliAuth = await this.isCliAuthenticated();
-      if (cliAuth) {
-        return true;
-      }
-
       const token = await this.getStoredToken();
 
       if (!token) {

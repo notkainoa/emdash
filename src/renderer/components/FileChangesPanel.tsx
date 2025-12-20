@@ -514,7 +514,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                           {stagingFiles.has(change.path) ? (
                             <Spinner size="sm" />
                           ) : (
-                            <Clipboard className="h-4 w-4" />
+                            <Plus className="h-4 w-4" />
                           )}
                         </Button>
                       </TooltipTrigger>

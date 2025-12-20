@@ -132,81 +132,6 @@ async function execGitWithRetry(
   throw lastError;
 }
 
-/**
- * Enhanced execFileAsync with similar retry logic for execFile operations
- */
-async function execGitFileWithRetry(
-  command: string,
-  args: string[],
-  options?: { cwd?: string; timeout?: number; maxBuffer?: number }
-): Promise<{ stdout: string; stderr: string }> {
-  let lastError: any = null;
-
-  for (let attempt = 0; attempt <= GIT_CONFIG.maxRetries; attempt++) {
-    try {
-      const opts = {
-        cwd: options?.cwd,
-        timeout: options?.timeout || GIT_CONFIG.timeout,
-        maxBuffer: options?.maxBuffer || GIT_CONFIG.maxBuffer,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GCM_INTERACTIVE: 'Never',
-        },
-      };
-
-      const result = await execFileAsync(command, args, opts);
-
-      // Log successful retry if it wasn't the first attempt
-      if (attempt > 0) {
-        log.info('Git file operation succeeded after retry', {
-          command: `${command} ${args[0] || ''}`,
-          attempt: attempt + 1,
-          cwd: options?.cwd,
-        });
-      }
-
-      return result;
-    } catch (error: any) {
-      lastError = error;
-
-      // Only retry on EPIPE errors
-      if (!isEpipeError(error)) {
-        // Not a transient error, don't retry
-        throw error;
-      }
-
-      // If this is the last attempt, throw the error
-      if (attempt === GIT_CONFIG.maxRetries) {
-        log.error('Git file operation failed after all retries', {
-          command: `${command} ${args[0] || ''}`,
-          attempts: attempt + 1,
-          cwd: options?.cwd,
-          error: error.message || error,
-        });
-        throw error;
-      }
-
-      // Log the retry attempt
-      const delay = getRetryDelay(attempt);
-      log.warn('Git file operation failed with EPIPE, retrying...', {
-        command: `${command} ${args[0] || ''}`,
-        attempt: attempt + 1,
-        maxRetries: GIT_CONFIG.maxRetries + 1,
-        delay: Math.round(delay),
-        cwd: options?.cwd,
-        error: error.message || error,
-      });
-
-      // Wait before retrying
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-
-  // This should never be reached, but TypeScript needs it
-  throw lastError;
-}
-
 export function registerGitIpc() {
   function resolveGitBin(): string {
     // Allow override via env
@@ -263,27 +188,6 @@ export function registerGitIpc() {
       },
     };
     return execAsync(command, execOpts);
-  };
-
-  /**
-   * Enhanced git file operations with proper timeout and buffer configuration
-   */
-  const gitExecFile = (
-    command: string,
-    args: string[],
-    opts?: { cwd?: string; timeout?: number; maxBuffer?: number }
-  ): Promise<{ stdout: string; stderr: string }> => {
-    const execOpts = {
-      cwd: opts?.cwd,
-      timeout: opts?.timeout || GIT_CONFIG.timeout,
-      maxBuffer: opts?.maxBuffer || GIT_CONFIG.maxBuffer,
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GCM_INTERACTIVE: 'Never',
-      },
-    };
-    return execFileAsync(command, args, execOpts);
   };
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
