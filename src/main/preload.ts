@@ -508,9 +508,7 @@ export interface ElectronAPI {
     createBranchIfOnDefault?: boolean;
     branchPrefix?: string;
   }) => Promise<{ success: boolean; branch?: string; output?: string; error?: string }>;
-  getPrCapabilities: (args: {
-    taskPath: string;
-  }) => Promise<{
+  getPrCapabilities: (args: { taskPath: string }) => Promise<{
     success: boolean;
     canPushToBase?: boolean;
     viewerPermission?: string;

@@ -50,6 +50,54 @@ export function registerGitIpc() {
   };
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * Validates GitHub repository name format (owner/repo)
+   * Allows only: alphanumerics, dashes, underscores, dots
+   */
+  function validateRepoName(repoName: string): { valid: boolean; error?: string } {
+    if (!repoName || typeof repoName !== 'string') {
+      return { valid: false, error: 'Repository name is required and must be a string' };
+    }
+
+    // Pattern: owner/repo where both parts contain only allowed chars
+    const pattern = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+    if (!pattern.test(repoName)) {
+      return {
+        valid: false,
+        error:
+          'Invalid repository name format. Expected: owner/repo with only alphanumeric characters, dots, dashes, and underscores',
+      };
+    }
+
+    // Additional length checks (GitHub limits)
+    const parts = repoName.split('/');
+    if (parts[0].length > 39 || parts[1].length > 100) {
+      return {
+        valid: false,
+        error: 'Repository name exceeds GitHub length limits',
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Execute gh CLI with arguments array to avoid shell interpolation
+   */
+  async function ghExecFile(
+    args: string[],
+    opts?: { cwd?: string }
+  ): Promise<{ stdout: string; stderr: string }> {
+    const GH_ENV = {
+      ...process.env,
+      GH_PROMPT_DISABLED: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'Never',
+    };
+
+    return execFileAsync('gh', args, { ...(opts || {}), env: GH_ENV });
+  }
   // Git: Status (moved from Codex IPC)
   ipcMain.handle('git:get-status', async (_, taskPath: string) => {
     try {
@@ -361,10 +409,10 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           // Non-fatal; continue
         }
 
-        // Build gh pr create command with explicit repo/base/head for reliability
-        const flags: string[] = [];
-        if (repoNameWithOwner) flags.push(`--repo ${JSON.stringify(repoNameWithOwner)}`);
-        if (title) flags.push(`--title ${JSON.stringify(title)}`);
+        // Build gh pr create command arguments to avoid shell injection
+        const args = ['pr', 'create'];
+        if (repoNameWithOwner) args.push('--repo', repoNameWithOwner);
+        if (title) args.push('--title', title);
 
         // Use temp file for body to properly handle newlines and multiline content
         let bodyFile: string | null = null;
@@ -376,36 +424,35 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
             );
             // Write body with actual newlines preserved
             fs.writeFileSync(bodyFile, body, 'utf8');
-            flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
+            args.push('--body-file', bodyFile);
           } catch (writeError) {
             log.warn('Failed to write body to temp file, falling back to --body flag', {
               writeError,
             });
             // Fallback to direct --body flag if temp file creation fails
-            flags.push(`--body ${JSON.stringify(body)}`);
+            args.push('--body', body);
           }
         }
 
-        if (base || defaultBranch) flags.push(`--base ${JSON.stringify(base || defaultBranch)}`);
+        if (base || defaultBranch) args.push('--base', base || defaultBranch);
         if (head) {
-          flags.push(`--head ${JSON.stringify(head)}`);
+          args.push('--head', head);
         } else if (currentBranch) {
           // Prefer owner:branch form when repo is known; otherwise branch name
           const headRef = repoNameWithOwner
             ? `${repoNameWithOwner.split('/')[0]}:${currentBranch}`
             : currentBranch;
-          flags.push(`--head ${JSON.stringify(headRef)}`);
+          args.push('--head', headRef);
         }
-        if (draft) flags.push('--draft');
-        if (web) flags.push('--web');
-        if (fill) flags.push('--fill');
-
-        const cmd = `gh pr create ${flags.join(' ')}`.trim();
+        // Boolean flags as single entries
+        if (draft) args.push('--draft');
+        if (web) args.push('--web');
+        if (fill) args.push('--fill');
 
         let stdout: string;
         let stderr: string;
         try {
-          const result = await execAsync(cmd, { cwd: taskPath });
+          const result = await execFileAsync('gh', args, { cwd: taskPath });
           stdout = result.stdout || '';
           stderr = result.stderr || '';
         } finally {
@@ -479,20 +526,19 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         draft,
         web,
         fill,
-      } =
-        args ||
-        ({} as {
-          taskPath: string;
-          commitMessage?: string;
-          createBranchIfOnDefault?: boolean;
-          branchPrefix?: string;
-          title?: string;
-          body?: string;
-          base?: string;
-          draft?: boolean;
-          web?: boolean;
-          fill?: boolean;
-        });
+      } = args ||
+      ({} as {
+        taskPath: string;
+        commitMessage?: string;
+        createBranchIfOnDefault?: boolean;
+        branchPrefix?: string;
+        title?: string;
+        body?: string;
+        base?: string;
+        draft?: boolean;
+        web?: boolean;
+        fill?: boolean;
+      });
 
       if (!taskPath) {
         return { success: false, error: 'taskPath is required' };
@@ -646,12 +692,20 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         const forkFullName = `${viewerLogin}/${repoName}`;
 
         const fetchForkUrl = async (): Promise<string | null> => {
+          // Validate forkFullName before use
+          const validation = validateRepoName(forkFullName);
+          if (!validation.valid) {
+            throw new Error(`Invalid repository name: ${validation.error}`);
+          }
+
           const queries = preferSsh ? ['.ssh_url', '.clone_url'] : ['.clone_url', '.ssh_url'];
           for (const q of queries) {
             try {
-              const { stdout: urlOut } = await ghExecAsync(
-                `gh api repos/${forkFullName} -q ${q}`,
-                { cwd: taskPath }
+              const { stdout: urlOut } = await ghExecFile(
+                ['api', `repos/${forkFullName}`, '-q', q],
+                {
+                  cwd: taskPath,
+                }
               );
               const url = (urlOut || '').trim();
               if (url) return url;
@@ -665,10 +719,19 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         // Ensure fork exists
         let forkRemoteUrl = await fetchForkUrl();
         if (!forkRemoteUrl) {
+          // Validate baseRepo before use
+          const validation = validateRepoName(baseRepo);
+          if (!validation.valid) {
+            return { success: false, error: `Invalid repository name: ${validation.error}` };
+          }
+
           try {
-            await ghExecAsync(`gh api -X POST repos/${baseRepo}/forks -f default_branch_only=true`, {
-              cwd: taskPath,
-            });
+            await ghExecFile(
+              ['api', '-X', 'POST', `repos/${baseRepo}/forks`, '-f', 'default_branch_only=true'],
+              {
+                cwd: taskPath,
+              }
+            );
           } catch (forkErr) {
             const msg = forkErr instanceof Error ? forkErr.message : String(forkErr);
             return { success: false, error: `Failed to create fork: ${msg}` };
@@ -698,7 +761,9 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
             });
           }
         } catch {
-          await execAsync(`git remote add fork ${JSON.stringify(forkRemoteUrl)}`, { cwd: taskPath });
+          await execAsync(`git remote add fork ${JSON.stringify(forkRemoteUrl)}`, {
+            cwd: taskPath,
+          });
         }
 
         // Push branch to fork
@@ -716,10 +781,10 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           };
         }
 
-        // Build gh pr create command with explicit repo/base/head for reliability
-        const flags: string[] = [];
-        if (baseRepo) flags.push(`--repo ${JSON.stringify(baseRepo)}`);
-        if (title) flags.push(`--title ${JSON.stringify(title)}`);
+        // Build gh pr create command arguments to avoid shell injection
+        const args = ['pr', 'create'];
+        if (baseRepo) args.push('--repo', baseRepo);
+        if (title) args.push('--title', title);
 
         let bodyFile: string | null = null;
         if (body) {
@@ -729,30 +794,29 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
               `gh-pr-body-${Date.now()}-${Math.random().toString(36).substring(7)}.txt`
             );
             fs.writeFileSync(bodyFile, body, 'utf8');
-            flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
+            args.push('--body-file', bodyFile);
           } catch (writeError) {
             log.warn('Failed to write body to temp file, falling back to --body flag', {
               writeError,
             });
-            flags.push(`--body ${JSON.stringify(body)}`);
+            args.push('--body', body);
           }
         }
 
-        if (defaultBranch) flags.push(`--base ${JSON.stringify(defaultBranch)}`);
+        if (defaultBranch) args.push('--base', defaultBranch);
 
         const headRef = `${viewerLogin}:${currentBranch}`;
-        flags.push(`--head ${JSON.stringify(headRef)}`);
+        args.push('--head', headRef);
 
-        if (draft) flags.push('--draft');
-        if (web) flags.push('--web');
-        if (fill) flags.push('--fill');
-
-        const cmd = `gh pr create ${flags.join(' ')}`.trim();
+        // Boolean flags as single entries
+        if (draft) args.push('--draft');
+        if (web) args.push('--web');
+        if (fill) args.push('--fill');
 
         let stdout: string;
         let stderr: string;
         try {
-          const result = await ghExecAsync(cmd, { cwd: taskPath });
+          const result = await ghExecFile(args, { cwd: taskPath });
           stdout = result.stdout || '';
           stderr = result.stderr || '';
         } finally {

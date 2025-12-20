@@ -588,7 +588,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
             <AlertDialogTitle className="text-lg">
               {prCapabilities?.baseRepo
                 ? `You don't have write access to ${prCapabilities.baseRepo}`
-                : 'You don\'t have write access to this repository'}
+                : "You don't have write access to this repository"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">
               {prCapabilities?.baseRepo
@@ -643,12 +643,11 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                 </span>
               </div>
             </div>
-
-            </div>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isCreatingForkPR}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 text-sm font-medium"
+              className="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               disabled={isCreatingForkPR}
               onClick={() => {
                 void handleConfirmForkPr();
