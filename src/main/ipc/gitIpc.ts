@@ -89,13 +89,6 @@ export function registerGitIpc() {
     args: string[],
     opts?: { cwd?: string }
   ): Promise<{ stdout: string; stderr: string }> {
-    const GH_ENV = {
-      ...process.env,
-      GH_PROMPT_DISABLED: '1',
-      GIT_TERMINAL_PROMPT: '0',
-      GCM_INTERACTIVE: 'Never',
-    };
-
     return execFileAsync('gh', args, { ...(opts || {}), env: GH_ENV });
   }
   // Git: Status (moved from Codex IPC)

@@ -149,7 +149,21 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
       if (res?.success) {
         setShowForkDialog(false);
         setPrCapabilities(null);
+      } else {
+        const details = res?.error || 'Unable to create a pull request from the fork.';
+        toast({
+          title: 'Fork PR Failed',
+          description: details,
+          variant: 'destructive',
+        });
       }
+    } catch (error: any) {
+      const message = error?.message || 'Unable to create a pull request from the fork.';
+      toast({
+        title: 'Fork PR Failed',
+        description: message,
+        variant: 'destructive',
+      });
     } finally {
       setIsCreatingForkPR(false);
     }
