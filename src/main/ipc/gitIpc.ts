@@ -124,7 +124,7 @@ async function execGitWithRetry(
       });
 
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
@@ -199,7 +199,7 @@ async function execGitFileWithRetry(
       });
 
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
@@ -570,11 +570,14 @@ export function registerGitIpc() {
             log.error('Failed to push branch before PR:', errorDetails);
 
             // Provide more user-friendly error message based on error type
-            let userMessage = 'Failed to push branch to origin. Please check your Git remotes and authentication.';
+            let userMessage =
+              'Failed to push branch to origin. Please check your Git remotes and authentication.';
             if (isEpipeError(pushErr2)) {
-              userMessage = 'Network connection failed during push. Please check your internet connection and try again.';
+              userMessage =
+                'Network connection failed during push. Please check your internet connection and try again.';
             } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
-              userMessage = 'Authentication failed. Please check your Git credentials and try again.';
+              userMessage =
+                'Authentication failed. Please check your Git credentials and try again.';
             } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
               userMessage = 'Permission denied. You may not have push access to this repository.';
             }
@@ -1028,13 +1031,18 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           // Provide more user-friendly error message based on error type
           let userMessage = `Failed to push branch to fork. Please check your Git remotes and authentication.`;
           if (isEpipeError(pushErr)) {
-            userMessage = 'Network connection failed during push to fork. Please check your internet connection and try again.';
+            userMessage =
+              'Network connection failed during push to fork. Please check your internet connection and try again.';
           } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
             userMessage = 'Authentication failed. Please check your Git credentials and try again.';
           } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
             userMessage = 'Permission denied. You may not have push access to the fork.';
-          } else if (errorDetails.includes('Repository not found') || errorDetails.includes('404')) {
-            userMessage = 'Fork repository not found or not accessible. The fork may still be being created.';
+          } else if (
+            errorDetails.includes('Repository not found') ||
+            errorDetails.includes('404')
+          ) {
+            userMessage =
+              'Fork repository not found or not accessible. The fork may still be being created.';
           }
 
           return {
@@ -1322,19 +1330,25 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           await execGitWithRetry('git push', { cwd: taskPath });
         } catch (pushErr) {
           try {
-            await execGitWithRetry(`git push --set-upstream origin ${JSON.stringify(activeBranch)}`, {
-              cwd: taskPath,
-            });
+            await execGitWithRetry(
+              `git push --set-upstream origin ${JSON.stringify(activeBranch)}`,
+              {
+                cwd: taskPath,
+              }
+            );
           } catch (pushErr2) {
             const errorDetails = pushErr2 instanceof Error ? pushErr2.message : String(pushErr2);
             log.error('Failed to push branch:', errorDetails);
 
             // Provide more user-friendly error message based on error type
-            let userMessage = 'Failed to push branch to origin. Please check your Git remotes and authentication.';
+            let userMessage =
+              'Failed to push branch to origin. Please check your Git remotes and authentication.';
             if (isEpipeError(pushErr2)) {
-              userMessage = 'Network connection failed during push. Please check your internet connection and try again.';
+              userMessage =
+                'Network connection failed during push. Please check your internet connection and try again.';
             } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
-              userMessage = 'Authentication failed. Please check your Git credentials and try again.';
+              userMessage =
+                'Authentication failed. Please check your Git credentials and try again.';
             } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
               userMessage = 'Permission denied. You may not have push access to this repository.';
             }
