@@ -20,7 +20,7 @@ import { useFileChanges } from '../hooks/useFileChanges';
 import { usePrStatus } from '../hooks/usePrStatus';
 import FileTypeIcon from './ui/file-type-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
+import { Clipboard, Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
 
 type PrCapabilities = {
   success: boolean;
@@ -500,7 +500,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                           {stagingFiles.has(change.path) ? (
                             <Spinner size="sm" />
                           ) : (
-                            <Plus className="h-4 w-4" />
+                            <Clipboard className="h-4 w-4" />
                           )}
                         </Button>
                       </TooltipTrigger>
@@ -623,7 +623,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
               <div className="mt-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
-                    ✓
+                    <Clipboard className="h-3.5 w-3.5" />
                   </span>
                   <div>
                     <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -639,7 +639,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                   </div>
                 </div>
                 <span className="text-xs font-medium text-emerald-700 dark:text-emerald-200">
-                  Fork + push ready
+                  {prCapabilities?.hasFork ? 'Push planned' : 'Fork + push planned'}
                 </span>
               </div>
             </div>
