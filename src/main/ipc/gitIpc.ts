@@ -17,6 +17,196 @@ import { databaseService } from '../services/DatabaseService';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
+// Enhanced Git operation configuration
+const GIT_CONFIG = {
+  timeout: 60000, // 60 seconds for git operations
+  maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+  maxRetries: 3,
+  baseDelay: 1000, // 1 second base delay
+  maxDelay: 10000, // 10 seconds max delay
+};
+
+/**
+ * Detect if an error is an EPIPE error (broken pipe)
+ * These are typically transient network/connection issues
+ */
+function isEpipeError(error: any): boolean {
+  const message = error?.message || error || '';
+  const code = error?.code;
+  const stderr = error?.stderr || '';
+
+  return (
+    code === 'EPIPE' ||
+    message.includes('EPIPE') ||
+    message.includes('write EPIPE') ||
+    message.includes('broken pipe') ||
+    stderr.includes('write EPIPE') ||
+    stderr.includes('broken pipe') ||
+    message.includes('remote hung up unexpectedly') ||
+    stderr.includes('remote hung up unexpectedly') ||
+    message.includes('connection reset by peer') ||
+    stderr.includes('connection reset by peer')
+  );
+}
+
+/**
+ * Calculate exponential backoff delay for retries
+ */
+function getRetryDelay(attempt: number): number {
+  const delay = Math.min(GIT_CONFIG.baseDelay * Math.pow(2, attempt), GIT_CONFIG.maxDelay);
+  // Add jitter to prevent thundering herd
+  return delay + Math.random() * 1000;
+}
+
+/**
+ * Enhanced execAsync with EPIPE detection and retry logic
+ */
+async function execGitWithRetry(
+  command: string,
+  options?: { cwd?: string; timeout?: number; maxBuffer?: number }
+): Promise<{ stdout: string; stderr: string }> {
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= GIT_CONFIG.maxRetries; attempt++) {
+    try {
+      const opts = {
+        cwd: options?.cwd,
+        timeout: options?.timeout || GIT_CONFIG.timeout,
+        maxBuffer: options?.maxBuffer || GIT_CONFIG.maxBuffer,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GCM_INTERACTIVE: 'Never',
+        },
+      };
+
+      const result = await execAsync(command, opts);
+
+      // Log successful retry if it wasn't the first attempt
+      if (attempt > 0) {
+        log.info('Git operation succeeded after retry', {
+          command: command.split(' ')[0],
+          attempt: attempt + 1,
+          cwd: options?.cwd,
+        });
+      }
+
+      return result;
+    } catch (error: any) {
+      lastError = error;
+
+      // Only retry on EPIPE errors
+      if (!isEpipeError(error)) {
+        // Not a transient error, don't retry
+        throw error;
+      }
+
+      // If this is the last attempt, throw the error
+      if (attempt === GIT_CONFIG.maxRetries) {
+        log.error('Git operation failed after all retries', {
+          command: command.split(' ')[0],
+          attempts: attempt + 1,
+          cwd: options?.cwd,
+          error: error.message || error,
+        });
+        throw error;
+      }
+
+      // Log the retry attempt
+      const delay = getRetryDelay(attempt);
+      log.warn('Git operation failed with EPIPE, retrying...', {
+        command: command.split(' ')[0],
+        attempt: attempt + 1,
+        maxRetries: GIT_CONFIG.maxRetries + 1,
+        delay: Math.round(delay),
+        cwd: options?.cwd,
+        error: error.message || error,
+      });
+
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError;
+}
+
+/**
+ * Enhanced execFileAsync with similar retry logic for execFile operations
+ */
+async function execGitFileWithRetry(
+  command: string,
+  args: string[],
+  options?: { cwd?: string; timeout?: number; maxBuffer?: number }
+): Promise<{ stdout: string; stderr: string }> {
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= GIT_CONFIG.maxRetries; attempt++) {
+    try {
+      const opts = {
+        cwd: options?.cwd,
+        timeout: options?.timeout || GIT_CONFIG.timeout,
+        maxBuffer: options?.maxBuffer || GIT_CONFIG.maxBuffer,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GCM_INTERACTIVE: 'Never',
+        },
+      };
+
+      const result = await execFileAsync(command, args, opts);
+
+      // Log successful retry if it wasn't the first attempt
+      if (attempt > 0) {
+        log.info('Git file operation succeeded after retry', {
+          command: `${command} ${args[0] || ''}`,
+          attempt: attempt + 1,
+          cwd: options?.cwd,
+        });
+      }
+
+      return result;
+    } catch (error: any) {
+      lastError = error;
+
+      // Only retry on EPIPE errors
+      if (!isEpipeError(error)) {
+        // Not a transient error, don't retry
+        throw error;
+      }
+
+      // If this is the last attempt, throw the error
+      if (attempt === GIT_CONFIG.maxRetries) {
+        log.error('Git file operation failed after all retries', {
+          command: `${command} ${args[0] || ''}`,
+          attempts: attempt + 1,
+          cwd: options?.cwd,
+          error: error.message || error,
+        });
+        throw error;
+      }
+
+      // Log the retry attempt
+      const delay = getRetryDelay(attempt);
+      log.warn('Git file operation failed with EPIPE, retrying...', {
+        command: `${command} ${args[0] || ''}`,
+        attempt: attempt + 1,
+        maxRetries: GIT_CONFIG.maxRetries + 1,
+        delay: Math.round(delay),
+        cwd: options?.cwd,
+        error: error.message || error,
+      });
+
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError;
+}
+
 export function registerGitIpc() {
   function resolveGitBin(): string {
     // Allow override via env
@@ -46,7 +236,54 @@ export function registerGitIpc() {
     command: string,
     opts?: { cwd?: string }
   ): Promise<{ stdout: string; stderr: string }> => {
-    return execAsync(command, { ...(opts || {}), env: GH_ENV });
+    const execOpts = {
+      cwd: opts?.cwd,
+      timeout: GIT_CONFIG.timeout,
+      maxBuffer: GIT_CONFIG.maxBuffer,
+      env: GH_ENV,
+    };
+    return execAsync(command, execOpts);
+  };
+
+  /**
+   * Enhanced git operations with proper timeout and buffer configuration
+   */
+  const gitExec = (
+    command: string,
+    opts?: { cwd?: string; timeout?: number; maxBuffer?: number }
+  ): Promise<{ stdout: string; stderr: string }> => {
+    const execOpts = {
+      cwd: opts?.cwd,
+      timeout: opts?.timeout || GIT_CONFIG.timeout,
+      maxBuffer: opts?.maxBuffer || GIT_CONFIG.maxBuffer,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GCM_INTERACTIVE: 'Never',
+      },
+    };
+    return execAsync(command, execOpts);
+  };
+
+  /**
+   * Enhanced git file operations with proper timeout and buffer configuration
+   */
+  const gitExecFile = (
+    command: string,
+    args: string[],
+    opts?: { cwd?: string; timeout?: number; maxBuffer?: number }
+  ): Promise<{ stdout: string; stderr: string }> => {
+    const execOpts = {
+      cwd: opts?.cwd,
+      timeout: opts?.timeout || GIT_CONFIG.timeout,
+      maxBuffer: opts?.maxBuffer || GIT_CONFIG.maxBuffer,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GCM_INTERACTIVE: 'Never',
+      },
+    };
+    return execFileAsync(command, args, execOpts);
   };
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,7 +326,13 @@ export function registerGitIpc() {
     args: string[],
     opts?: { cwd?: string }
   ): Promise<{ stdout: string; stderr: string }> {
-    return execFileAsync('gh', args, { ...(opts || {}), env: GH_ENV });
+    const execOpts = {
+      cwd: opts?.cwd,
+      timeout: GIT_CONFIG.timeout,
+      maxBuffer: GIT_CONFIG.maxBuffer,
+      env: { ...GH_ENV },
+    };
+    return execFileAsync('gh', args, execOpts);
   }
   // Git: Status (moved from Codex IPC)
   ipcMain.handle('git:get-status', async (_, taskPath: string) => {
@@ -178,7 +421,7 @@ export function registerGitIpc() {
     if (!taskPath) return { success: false, error: 'taskPath is required' };
 
     try {
-      await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+      await gitExec('git rev-parse --is-inside-work-tree', { cwd: taskPath });
     } catch (error) {
       return { success: false, error: 'Not a git repository' };
     }
@@ -310,7 +553,7 @@ export function registerGitIpc() {
 
         // Ensure branch is pushed to origin so PR includes latest commit
         try {
-          await execAsync('git push', { cwd: taskPath });
+          await execGitWithRetry('git push', { cwd: taskPath });
           outputs.push('git push: success');
         } catch (pushErr) {
           try {
@@ -318,16 +561,28 @@ export function registerGitIpc() {
               cwd: taskPath,
             });
             const branch = branchOut.trim();
-            await execAsync(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
+            await execGitWithRetry(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
               cwd: taskPath,
             });
             outputs.push(`git push --set-upstream origin ${branch}: success`);
           } catch (pushErr2) {
-            log.error('Failed to push branch before PR:', pushErr2 as string);
+            const errorDetails = pushErr2 instanceof Error ? pushErr2.message : String(pushErr2);
+            log.error('Failed to push branch before PR:', errorDetails);
+
+            // Provide more user-friendly error message based on error type
+            let userMessage = 'Failed to push branch to origin. Please check your Git remotes and authentication.';
+            if (isEpipeError(pushErr2)) {
+              userMessage = 'Network connection failed during push. Please check your internet connection and try again.';
+            } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
+              userMessage = 'Authentication failed. Please check your Git credentials and try again.';
+            } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
+              userMessage = 'Permission denied. You may not have push access to this repository.';
+            }
+
             return {
               success: false,
-              error:
-                'Failed to push branch to origin. Please check your Git remotes and authentication.',
+              error: userMessage,
+              technicalError: errorDetails,
             };
           }
         }
@@ -761,16 +1016,32 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
         // Push branch to fork
         try {
-          await execAsync(`git push --set-upstream fork ${JSON.stringify(currentBranch)}`, {
+          outputs.push('Pushing branch to fork...');
+          await execGitWithRetry(`git push --set-upstream fork ${JSON.stringify(currentBranch)}`, {
             cwd: taskPath,
           });
           outputs.push(`git push --set-upstream fork ${currentBranch}: success`);
         } catch (pushErr) {
-          const errMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+          const errorDetails = pushErr instanceof Error ? pushErr.message : String(pushErr);
+          log.error('Failed to push branch to fork:', errorDetails);
+
+          // Provide more user-friendly error message based on error type
+          let userMessage = `Failed to push branch to fork. Please check your Git remotes and authentication.`;
+          if (isEpipeError(pushErr)) {
+            userMessage = 'Network connection failed during push to fork. Please check your internet connection and try again.';
+          } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
+            userMessage = 'Authentication failed. Please check your Git credentials and try again.';
+          } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
+            userMessage = 'Permission denied. You may not have push access to the fork.';
+          } else if (errorDetails.includes('Repository not found') || errorDetails.includes('404')) {
+            userMessage = 'Fork repository not found or not accessible. The fork may still be being created.';
+          }
+
           return {
             success: false,
-            error: `Failed to push branch to fork: ${errMsg}`,
-            output: errMsg,
+            error: userMessage,
+            output: errorDetails,
+            technicalError: errorDetails,
           };
         }
 
@@ -954,10 +1225,10 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
       try {
         // Ensure we're in a git repo
-        await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+        await gitExec('git rev-parse --is-inside-work-tree', { cwd: taskPath });
 
         // Determine current branch
-        const { stdout: currentBranchOut } = await execAsync('git branch --show-current', {
+        const { stdout: currentBranchOut } = await gitExec('git branch --show-current', {
           cwd: taskPath,
         });
         const currentBranch = (currentBranchOut || '').trim();
@@ -1048,11 +1319,32 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
         // Push current branch (set upstream if needed)
         try {
-          await execAsync('git push', { cwd: taskPath });
+          await execGitWithRetry('git push', { cwd: taskPath });
         } catch (pushErr) {
-          await execAsync(`git push --set-upstream origin ${JSON.stringify(activeBranch)}`, {
-            cwd: taskPath,
-          });
+          try {
+            await execGitWithRetry(`git push --set-upstream origin ${JSON.stringify(activeBranch)}`, {
+              cwd: taskPath,
+            });
+          } catch (pushErr2) {
+            const errorDetails = pushErr2 instanceof Error ? pushErr2.message : String(pushErr2);
+            log.error('Failed to push branch:', errorDetails);
+
+            // Provide more user-friendly error message based on error type
+            let userMessage = 'Failed to push branch to origin. Please check your Git remotes and authentication.';
+            if (isEpipeError(pushErr2)) {
+              userMessage = 'Network connection failed during push. Please check your internet connection and try again.';
+            } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
+              userMessage = 'Authentication failed. Please check your Git credentials and try again.';
+            } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
+              userMessage = 'Permission denied. You may not have push access to this repository.';
+            }
+
+            return {
+              success: false,
+              error: userMessage,
+              technicalError: errorDetails,
+            };
+          }
         }
 
         const { stdout: out } = await execAsync('git status -sb', { cwd: taskPath });
