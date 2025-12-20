@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }) => ipcRenderer.invoke('git:commit-and-push', args),
   generatePrContent: (args: { taskPath: string; base?: string }) =>
     ipcRenderer.invoke('git:generate-pr-content', args),
+  getPrCapabilities: (args: { taskPath: string }) =>
+    ipcRenderer.invoke('git:get-pr-capabilities', args),
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -148,6 +150,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     web?: boolean;
     fill?: boolean;
   }) => ipcRenderer.invoke('git:create-pr', args),
+  createPullRequestFromFork: (args: {
+    taskPath: string;
+    commitMessage?: string;
+    createBranchIfOnDefault?: boolean;
+    branchPrefix?: string;
+    title?: string;
+    body?: string;
+    base?: string;
+    head?: string;
+    draft?: boolean;
+    web?: boolean;
+    fill?: boolean;
+  }) => ipcRenderer.invoke('git:create-pr-from-fork', args),
   getPrStatus: (args: { taskPath: string }) => ipcRenderer.invoke('git:get-pr-status', args),
   getBranchStatus: (args: { taskPath: string }) =>
     ipcRenderer.invoke('git:get-branch-status', args),
@@ -493,6 +508,21 @@ export interface ElectronAPI {
     createBranchIfOnDefault?: boolean;
     branchPrefix?: string;
   }) => Promise<{ success: boolean; branch?: string; output?: string; error?: string }>;
+  getPrCapabilities: (args: {
+    taskPath: string;
+  }) => Promise<{
+    success: boolean;
+    canPushToBase?: boolean;
+    viewerPermission?: string;
+    nameWithOwner?: string;
+    baseRepo?: string;
+    parentRepo?: string | null;
+    isFork?: boolean;
+    viewerLogin?: string;
+    defaultBranch?: string;
+    hasFork?: boolean;
+    error?: string;
+  }>;
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -503,6 +533,26 @@ export interface ElectronAPI {
     web?: boolean;
     fill?: boolean;
   }) => Promise<{ success: boolean; url?: string; output?: string; error?: string }>;
+  createPullRequestFromFork: (args: {
+    taskPath: string;
+    commitMessage?: string;
+    createBranchIfOnDefault?: boolean;
+    branchPrefix?: string;
+    title?: string;
+    body?: string;
+    base?: string;
+    head?: string;
+    draft?: boolean;
+    web?: boolean;
+    fill?: boolean;
+  }) => Promise<{
+    success: boolean;
+    url?: string;
+    output?: string;
+    error?: string;
+    fork?: string;
+    baseRepo?: string;
+  }>;
   connectToGitHub: (
     projectPath: string
   ) => Promise<{ success: boolean; repository?: string; branch?: string; error?: string }>;

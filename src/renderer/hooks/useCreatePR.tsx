@@ -8,6 +8,7 @@ type CreatePROptions = {
   commitMessage?: string;
   createBranchIfOnDefault?: boolean;
   branchPrefix?: string;
+  strategy?: 'direct' | 'fork';
   prOptions?: {
     title?: string;
     body?: string;
@@ -30,6 +31,7 @@ export function useCreatePR() {
       commitMessage = 'chore: apply task changes',
       createBranchIfOnDefault = true,
       branchPrefix = 'orch',
+      strategy = 'direct',
       prOptions,
       onSuccess,
     } = opts;
@@ -38,7 +40,11 @@ export function useCreatePR() {
     try {
       // Guard: ensure Electron bridge methods exist (prevents hard crashes in plain web builds)
       const api: any = (window as any).electronAPI;
-      if (!api?.gitCommitAndPush || !api?.createPullRequest) {
+      if (
+        !api?.gitCommitAndPush ||
+        !api?.createPullRequest ||
+        (strategy === 'fork' && !api?.createPullRequestFromFork)
+      ) {
         const msg = 'PR creation is only available in the Electron app. Start via "npm run d".';
         toast({ title: 'Create PR Unavailable', description: msg, variant: 'destructive' });
         return { success: false, error: 'Electron bridge unavailable' } as any;
@@ -81,27 +87,40 @@ export function useCreatePR() {
         finalPrOptions.title = taskPath.split(/[/\\]/).filter(Boolean).pop() || 'Task';
       }
 
-      const commitRes = await api.gitCommitAndPush({
-        taskPath,
-        commitMessage,
-        createBranchIfOnDefault,
-        branchPrefix,
-      });
+      let res: any;
 
-      if (!commitRes?.success) {
-        toast({
-          title: 'Commit/Push Failed',
-          description: commitRes?.error || 'Unable to push changes.',
-          variant: 'destructive',
+      if (strategy === 'fork') {
+        res = await api.createPullRequestFromFork({
+          taskPath,
+          commitMessage,
+          createBranchIfOnDefault,
+          branchPrefix,
+          fill: true,
+          ...finalPrOptions,
         });
-        return { success: false, error: commitRes?.error || 'Commit/push failed' } as any;
-      }
+      } else {
+        const commitRes = await api.gitCommitAndPush({
+          taskPath,
+          commitMessage,
+          createBranchIfOnDefault,
+          branchPrefix,
+        });
 
-      const res = await api.createPullRequest({
-        taskPath,
-        fill: true,
-        ...finalPrOptions,
-      });
+        if (!commitRes?.success) {
+          toast({
+            title: 'Commit/Push Failed',
+            description: commitRes?.error || 'Unable to push changes.',
+            variant: 'destructive',
+          });
+          return { success: false, error: commitRes?.error || 'Commit/push failed' } as any;
+        }
+
+        res = await api.createPullRequest({
+          taskPath,
+          fill: true,
+          ...finalPrOptions,
+        });
+      }
 
       if (res?.success) {
         void (async () => {
