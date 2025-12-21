@@ -49,7 +49,8 @@ function normalizeGhError(error: any): { userMessage: string; technical: string;
 
   if (error?.code === 'ENOENT') {
     return {
-      userMessage: 'GitHub CLI (gh) is not installed. Install it or enable GitHub features in Emdash.',
+      userMessage:
+        'GitHub CLI (gh) is not installed. Install it or enable GitHub features in Emdash.',
       technical,
       code: 'GH_NOT_INSTALLED',
     };
@@ -238,11 +239,10 @@ export function registerGitIpc() {
     const env = buildGhEnv(token);
 
     try {
-      const { stdout: viewerOut } = await execFileAsync(
-        'gh',
-        ['api', 'user', '-q', '.login'],
-        { cwd: taskPath, env }
-      );
+      const { stdout: viewerOut } = await execFileAsync('gh', ['api', 'user', '-q', '.login'], {
+        cwd: taskPath,
+        env,
+      });
       const viewerLogin = (viewerOut || '').trim();
 
       const { stdout: repoOut } = await execFileAsync(
@@ -273,7 +273,9 @@ export function registerGitIpc() {
         ['repo', 'view', baseRepo, '--json', 'viewerPermission', '-q', '.viewerPermission'],
         { cwd: taskPath, env }
       );
-      const viewerPermission = String(permOut || '').trim().toUpperCase();
+      const viewerPermission = String(permOut || '')
+        .trim()
+        .toUpperCase();
       const canPushToBase = ['WRITE', 'MAINTAIN', 'ADMIN'].includes(viewerPermission);
 
       const repoName = baseRepo.split('/').pop() || baseRepo;
@@ -764,7 +766,9 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           const norm = normalizeGhError(forkErr);
           const lower = norm.technical.toLowerCase();
           const alreadyExists =
-            lower.includes('already exists') || lower.includes('fork already exists') || lower.includes('has already been forked');
+            lower.includes('already exists') ||
+            lower.includes('fork already exists') ||
+            lower.includes('has already been forked');
           if (!alreadyExists) {
             return {
               success: false,
@@ -811,8 +815,7 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           if (!forkRemoteUrl) {
             return {
               success: false,
-              error:
-                'Your fork exists but is not ready yet. Please wait a moment and try again.',
+              error: 'Your fork exists but is not ready yet. Please wait a moment and try again.',
             };
           }
 
@@ -830,10 +833,13 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
             outputs.push(`git push: success (${remoteName}/${currentBranch})`);
             break;
           } catch (pushErr: any) {
-            const details = typeof pushErr?.message === 'string' ? pushErr.message : String(pushErr);
+            const details =
+              typeof pushErr?.message === 'string' ? pushErr.message : String(pushErr);
             const lower = details.toLowerCase();
             const likelyProvisioning =
-              lower.includes('repository not found') || lower.includes('not found') || lower.includes('404');
+              lower.includes('repository not found') ||
+              lower.includes('not found') ||
+              lower.includes('404');
 
             if (likelyProvisioning && attempt < 5) {
               await sleep(1000 + attempt * 800);
@@ -844,12 +850,13 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
               'Failed to push your branch to the fork. Check your Git credentials and try again.';
             if (details.toLowerCase().includes('permission denied') || details.includes('403')) {
               userMessage =
-                "Permission denied pushing to your fork. Make sure Git is authenticated for your GitHub account.";
+                'Permission denied pushing to your fork. Make sure Git is authenticated for your GitHub account.';
             } else if (
               lower.includes('could not resolve host') ||
               lower.includes('failed to connect')
             ) {
-              userMessage = 'Unable to reach GitHub to push your branch. Check your internet connection.';
+              userMessage =
+                'Unable to reach GitHub to push your branch. Check your internet connection.';
             }
 
             return {
