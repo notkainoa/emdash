@@ -1039,51 +1039,51 @@ const TaskModal: React.FC<TaskModalProps> = ({
                   }}
                   className="flex flex-1 flex-col"
                 >
-                  <div className="flex flex-col w-full min-h-[160px]">
-                    <div className="relative flex-1 p-5 pb-16">
-                    {attachedIssue ? (
-                      <div
-                        key={attachedIssue.key}
-                        className="mb-4 flex max-w-[420px] items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
-                      >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
-                          <img src={attachedIssue.logo} alt="" className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium text-foreground">
-                            {attachedIssue.label}
-                          </div>
-                          {attachedIssue.title ? (
-                            <div className="truncate text-xs text-muted-foreground">
-                              {attachedIssue.title}
-                            </div>
-                          ) : null}
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={clearAttachedIssue}
-                          className="h-7 w-7 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                          aria-label="Remove attached issue"
+                  <div className="flex w-full min-h-[160px] max-h-[400px] flex-col">
+                    <div className="relative flex flex-1 flex-col p-4">
+                      {attachedIssue ? (
+                        <div
+                          key={attachedIssue.key}
+                          className="mb-4 flex max-w-[420px] items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
                         >
-                          <X size={14} />
-                        </Button>
-                      </div>
-                    ) : null}
-                    <textarea
-                      ref={promptRef}
-                      value={initialPrompt}
-                      onChange={(e) => setInitialPrompt(e.target.value)}
-                      placeholder={promptPlaceholder}
-                      className={`w-full h-full min-h-[120px] bg-transparent text-lg text-foreground placeholder:text-muted-foreground focus:outline-none resize-none leading-relaxed selection:bg-primary/20 ${
-                        !hasInitialPromptSupport ? 'opacity-50' : ''
-                      }`}
-                      autoFocus
-                      spellCheck={false}
-                      disabled={!hasInitialPromptSupport}
-                    />
-                  </div>
+                          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                            <img src={attachedIssue.logo} alt="" className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium text-foreground">
+                              {attachedIssue.label}
+                            </div>
+                            {attachedIssue.title ? (
+                              <div className="truncate text-xs text-muted-foreground">
+                                {attachedIssue.title}
+                              </div>
+                            ) : null}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={clearAttachedIssue}
+                            className="h-7 w-7 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                            aria-label="Remove attached issue"
+                          >
+                            <X size={14} />
+                          </Button>
+                        </div>
+                      ) : null}
+                      <textarea
+                        ref={promptRef}
+                        value={initialPrompt}
+                        onChange={(e) => setInitialPrompt(e.target.value)}
+                        placeholder={promptPlaceholder}
+                        className={`w-full flex-1 min-h-[120px] bg-transparent text-lg text-foreground placeholder:text-muted-foreground focus:outline-none resize-none overflow-y-auto leading-relaxed selection:bg-primary/20 ${
+                          !hasInitialPromptSupport ? 'opacity-50' : ''
+                        }`}
+                        autoFocus
+                        spellCheck={false}
+                        disabled={!hasInitialPromptSupport}
+                      />
+                    </div>
                   </div>
 
                   {nameHasError ? (
@@ -1092,10 +1092,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     </p>
                   ) : null}
 
-                  {/* Floating buttons overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between p-4 bg-gradient-to-t from-background/95 to-transparent pointer-events-none">
+                  <div className="flex items-center justify-between px-4 pb-4">
                     {/* Left side buttons */}
-                    <div className="flex items-center gap-2 pointer-events-auto">
+                    <div className="flex items-center gap-2">
                       <div className="relative">
                         <MultiProviderDropdown
                           providerRuns={providerRuns}
@@ -1105,7 +1104,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                         />
                       </div>
 
-                      <div className="relative pointer-events-auto">
+                      <div className="relative">
                         <Popover open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
                           <PopoverTrigger asChild>
                             <button
@@ -1558,7 +1557,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     </div>
 
                     {/* Right side buttons */}
-                    <div className="flex items-center gap-2 pointer-events-auto">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => {
