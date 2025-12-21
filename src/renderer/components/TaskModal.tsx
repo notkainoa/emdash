@@ -1,22 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Spinner } from './ui/spinner';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import {
   ArrowUp,
-  FileUp,
-  Github,
+  Check,
   GitBranch,
-  Hash,
   Pencil,
+  Plus,
+  Search,
   Shield,
   ShieldAlert,
-  Sparkles,
-  Trello,
   X,
 } from 'lucide-react';
 import { MultiProviderDropdown } from './MultiProviderDropdown';
@@ -27,6 +27,10 @@ import { providerMeta } from '../providers/meta';
 import { isValidProviderId } from '@shared/providers/registry';
 import { type LinearIssueSummary } from '../types/linear';
 import { type GitHubIssueSummary } from '../types/github';
+import linearLogo from '../../assets/images/linear.png';
+import githubLogo from '../../assets/images/github.png';
+import jiraLogo from '../../assets/images/jira.png';
+import finderLogo from '../../assets/images/finder.png';
 import {
   generateFriendlyTaskName,
   normalizeTaskName,
@@ -137,6 +141,33 @@ const TaskModal: React.FC<TaskModalProps> = ({
   const [activeAttachment, setActiveAttachment] = useState<'linear' | 'github' | 'jira' | null>(
     null
   );
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [hoveredAttachment, setHoveredAttachment] = useState<'github' | 'linear' | 'jira' | null>(null);
+  const [githubDropdownOpen, setGithubDropdownOpen] = useState(false);
+  const [linearDropdownOpen, setLinearDropdownOpen] = useState(false);
+  const [jiraDropdownOpen, setJiraDropdownOpen] = useState(false);
+
+  // Search state management
+  const [githubIssues, setGithubIssues] = useState<GitHubIssueSummary[]>([]);
+  const [githubSearchTerm, setGithubSearchTerm] = useState('');
+  const [githubSearchResults, setGithubSearchResults] = useState<GitHubIssueSummary[]>([]);
+  const [isGithubSearching, setIsGithubSearching] = useState(false);
+  const [isGithubLoading, setIsGithubLoading] = useState(false);
+
+  const [linearIssues, setLinearIssues] = useState<LinearIssueSummary[]>([]);
+  const [linearSearchTerm, setLinearSearchTerm] = useState('');
+  const [linearSearchResults, setLinearSearchResults] = useState<LinearIssueSummary[]>([]);
+  const [isLinearSearching, setIsLinearSearching] = useState(false);
+  const [isLinearLoading, setIsLinearLoading] = useState(false);
+
+  const [jiraIssues, setJiraIssues] = useState<JiraIssueSummary[]>([]);
+  const [jiraSearchTerm, setJiraSearchTerm] = useState('');
+  const [jiraSearchResults, setJiraSearchResults] = useState<JiraIssueSummary[]>([]);
+  const [isJiraSearching, setIsJiraSearching] = useState(false);
+  const [isJiraLoading, setIsJiraLoading] = useState(false);
+  const [githubVisibleCount, setGithubVisibleCount] = useState(10);
+  const [linearVisibleCount, setLinearVisibleCount] = useState(10);
+  const [jiraVisibleCount, setJiraVisibleCount] = useState(10);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const branchTimestampRef = useRef<number>(Date.now());
@@ -275,6 +306,22 @@ const TaskModal: React.FC<TaskModalProps> = ({
     setBranchTemplate(DEFAULT_BRANCH_TEMPLATE);
     setIsEditingHeader(false);
     setActiveAttachment(null);
+    setPlusMenuOpen(false);
+    setGithubDropdownOpen(false);
+    setLinearDropdownOpen(false);
+    setJiraDropdownOpen(false);
+
+    // Reset search state
+    setGithubSearchTerm('');
+    setLinearSearchTerm('');
+    setJiraSearchTerm('');
+    setGithubSearchResults([]);
+    setLinearSearchResults([]);
+    setJiraSearchResults([]);
+    setGithubVisibleCount(10);
+    setLinearVisibleCount(10);
+    setJiraVisibleCount(10);
+
     branchTimestampRef.current = Date.now();
     userHasTypedRef.current = false;
     isInitialSetupRef.current = false; // allow typing to mark userHasTyped immediately
@@ -385,6 +432,53 @@ const TaskModal: React.FC<TaskModalProps> = ({
     };
   }, [isOpen]);
 
+  // Close search modals on click outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Element;
+      // Only close if clicking outside both the modal and the plus menu
+      if (
+        !target.closest('.attachment-menu-button') &&
+        !target.closest('[data-modal-container]') &&
+        !target.closest('[role="menu"]')
+      ) {
+        setHoveredAttachment(null);
+      }
+    };
+
+    if (hoveredAttachment) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [hoveredAttachment]);
+
+  // Auto-open dropdowns when modals appear
+  useEffect(() => {
+    if (hoveredAttachment === 'github') {
+      const timer = setTimeout(() => setGithubDropdownOpen(true), 100);
+      return () => clearTimeout(timer);
+    }
+    return () => setGithubDropdownOpen(false);
+  }, [hoveredAttachment]);
+
+  useEffect(() => {
+    if (hoveredAttachment === 'linear') {
+      const timer = setTimeout(() => setLinearDropdownOpen(true), 100);
+      return () => clearTimeout(timer);
+    }
+    return () => setLinearDropdownOpen(false);
+  }, [hoveredAttachment]);
+
+  useEffect(() => {
+    if (hoveredAttachment === 'jira') {
+      const timer = setTimeout(() => setJiraDropdownOpen(true), 100);
+      return () => clearTimeout(timer);
+    }
+    return () => setJiraDropdownOpen(false);
+  }, [hoveredAttachment]);
+
   const handleLinearConnect = useCallback(async () => {
     const trimmedKey = linearApiKey.trim();
     if (!trimmedKey || !window?.electronAPI?.linearSaveToken) {
@@ -467,10 +561,60 @@ const TaskModal: React.FC<TaskModalProps> = ({
   const nameHasError = touched && !!error;
   const canToggleAutoApprove = hasAutoApproveSupport;
   const attachmentsDisabled = !hasInitialPromptSupport;
+  const attachedIssue = useMemo(() => {
+    if (selectedGithubIssue) {
+      return {
+        key: `github-${selectedGithubIssue.number}`,
+        label: `GitHub Issue #${selectedGithubIssue.number}`,
+        title: selectedGithubIssue.title,
+        logo: githubLogo,
+      };
+    }
+    if (selectedLinearIssue) {
+      return {
+        key: `linear-${selectedLinearIssue.identifier}`,
+        label: `Linear Issue ${selectedLinearIssue.identifier}`,
+        title: selectedLinearIssue.title,
+        logo: linearLogo,
+      };
+    }
+    if (selectedJiraIssue) {
+      return {
+        key: `jira-${selectedJiraIssue.key}`,
+        label: `Jira Ticket ${selectedJiraIssue.key}`,
+        title: selectedJiraIssue.summary,
+        logo: jiraLogo,
+      };
+    }
+    return null;
+  }, [selectedGithubIssue, selectedLinearIssue, selectedJiraIssue]);
 
   const toggleAttachment = useCallback((next: 'linear' | 'github' | 'jira') => {
     setActiveAttachment((prev) => (prev === next ? null : next));
   }, []);
+
+  const clearAttachedIssue = useCallback(() => {
+    setSelectedLinearIssue(null);
+    setSelectedGithubIssue(null);
+    setSelectedJiraIssue(null);
+    setActiveAttachment(null);
+  }, []);
+
+  const handleAttachmentMenuSelect = useCallback(
+    (next: 'linear' | 'github' | 'jira' | 'files') => {
+      setPlusMenuOpen(false);
+      if (next === 'files') {
+        setActiveAttachment(null);
+        return;
+      }
+      if (attachmentsDisabled) return;
+      setActiveAttachment(next);
+      if (next === 'linear') {
+        setAutoOpenLinearSelector(true);
+      }
+    },
+    [attachmentsDisabled]
+  );
 
   const handleSubmit = useCallback(() => {
     setTouched(true);
@@ -518,13 +662,271 @@ const TaskModal: React.FC<TaskModalProps> = ({
     validate,
   ]);
 
+  // API access pattern (same as IssueSelector components)
+  const api = (typeof window !== 'undefined' ? (window as any).electronAPI : null) as any;
+
+  // Data fetching functions for direct search UI
+  const loadGithubIssues = useCallback(async () => {
+    if (!api?.githubIssuesList || !projectPath) return;
+    setIsGithubLoading(true);
+    try {
+      const result = await api.githubIssuesList(projectPath, 50);
+      if (result?.success) {
+        setGithubIssues(result.issues ?? []);
+      }
+    } catch (error) {
+      console.error('Failed to load GitHub issues:', error);
+      setGithubIssues([]);
+    } finally {
+      setIsGithubLoading(false);
+    }
+  }, [projectPath]);
+
+  const searchGithubIssues = useCallback(async (term: string) => {
+    if (!term.trim() || !api?.githubIssuesSearch || !projectPath) {
+      setGithubSearchResults([]);
+      return;
+    }
+    setIsGithubSearching(true);
+    try {
+      const result = await api.githubIssuesSearch(projectPath, term.trim(), 20);
+      if (result?.success) {
+        setGithubSearchResults(result.issues ?? []);
+      } else {
+        setGithubSearchResults([]);
+      }
+    } catch (error) {
+      console.error('Failed to search GitHub issues:', error);
+      setGithubSearchResults([]);
+    } finally {
+      setIsGithubSearching(false);
+    }
+  }, [projectPath]);
+
+  const loadLinearIssues = useCallback(async () => {
+    if (!api?.linearInitialFetch) return;
+    setIsLinearLoading(true);
+    try {
+      const result = await api.linearInitialFetch(50);
+      if (result?.success) {
+        setLinearIssues(result.issues ?? []);
+      }
+    } catch (error) {
+      console.error('Failed to load Linear issues:', error);
+      setLinearIssues([]);
+    } finally {
+      setIsLinearLoading(false);
+    }
+  }, []);
+
+  const searchLinearIssues = useCallback(async (term: string) => {
+    if (!term.trim() || !api?.linearSearchIssues) {
+      setLinearSearchResults([]);
+      return;
+    }
+    setIsLinearSearching(true);
+    try {
+      const result = await api.linearSearchIssues(term.trim(), 20);
+      if (result?.success) {
+        setLinearSearchResults(result.issues ?? []);
+      } else {
+        setLinearSearchResults([]);
+      }
+    } catch (error) {
+      console.error('Failed to search Linear issues:', error);
+      setLinearSearchResults([]);
+    } finally {
+      setIsLinearSearching(false);
+    }
+  }, []);
+
+  const loadJiraIssues = useCallback(async () => {
+    if (!api?.jiraInitialFetch) return;
+    setIsJiraLoading(true);
+    try {
+      const result = await api.jiraInitialFetch(50);
+      if (result?.success) {
+        setJiraIssues(result.issues ?? []);
+      }
+    } catch (error) {
+      console.error('Failed to load Jira issues:', error);
+      setJiraIssues([]);
+    } finally {
+      setIsJiraLoading(false);
+    }
+  }, []);
+
+  const searchJiraIssues = useCallback(async (term: string) => {
+    if (!term.trim() || !api?.jiraSearchIssues) {
+      setJiraSearchResults([]);
+      return;
+    }
+    setIsJiraSearching(true);
+    try {
+      const result = await api.jiraSearchIssues(term.trim(), 20);
+      if (result?.success) {
+        setJiraSearchResults(result.issues ?? []);
+      } else {
+        setJiraSearchResults([]);
+      }
+    } catch (error) {
+      console.error('Failed to search Jira issues:', error);
+      setJiraSearchResults([]);
+    } finally {
+      setIsJiraSearching(false);
+    }
+  }, []);
+
+  // Auto-load issues when modals open
+  useEffect(() => {
+    if (hoveredAttachment === 'github' && githubIssues.length === 0 && !isGithubLoading) {
+      loadGithubIssues();
+    }
+  }, [hoveredAttachment, githubIssues.length, isGithubLoading, loadGithubIssues]);
+
+  useEffect(() => {
+    if (hoveredAttachment === 'linear' && linearIssues.length === 0 && !isLinearLoading) {
+      loadLinearIssues();
+    }
+  }, [hoveredAttachment, linearIssues.length, isLinearLoading, loadLinearIssues]);
+
+  useEffect(() => {
+    if (hoveredAttachment === 'jira' && jiraIssues.length === 0 && !isJiraLoading) {
+      loadJiraIssues();
+    }
+  }, [hoveredAttachment, jiraIssues.length, isJiraLoading, loadJiraIssues]);
+
+  // Debounced search handling
+  useEffect(() => {
+    const id = setTimeout(() => searchGithubIssues(githubSearchTerm), 300);
+    return () => clearTimeout(id);
+  }, [githubSearchTerm, searchGithubIssues]);
+
+  useEffect(() => {
+    const id = setTimeout(() => searchLinearIssues(linearSearchTerm), 300);
+    return () => clearTimeout(id);
+  }, [linearSearchTerm, searchLinearIssues]);
+
+  useEffect(() => {
+    const id = setTimeout(() => searchJiraIssues(jiraSearchTerm), 300);
+    return () => clearTimeout(id);
+  }, [jiraSearchTerm, searchJiraIssues]);
+
+  // Compute display issues
+  const githubDisplayIssues = useMemo(() => {
+    if (githubSearchTerm.trim()) return githubSearchResults;
+    return githubIssues;
+  }, [githubSearchResults, githubIssues, githubSearchTerm]);
+
+  const linearDisplayIssues = useMemo(() => {
+    if (linearSearchTerm.trim()) return linearSearchResults;
+    return linearIssues;
+  }, [linearSearchResults, linearIssues, linearSearchTerm]);
+
+  const jiraDisplayIssues = useMemo(() => {
+    if (jiraSearchTerm.trim()) return jiraSearchResults;
+    return jiraIssues;
+  }, [jiraSearchResults, jiraIssues, jiraSearchTerm]);
+
+  // Reset visible count when search changes
+  useEffect(() => {
+    setGithubVisibleCount(10);
+  }, [githubSearchTerm]);
+  useEffect(() => {
+    setLinearVisibleCount(10);
+  }, [linearSearchTerm]);
+  useEffect(() => {
+    setJiraVisibleCount(10);
+  }, [jiraSearchTerm]);
+
+  // Show visible issues
+  const githubShowIssues = useMemo(
+    () => githubDisplayIssues.slice(0, Math.max(10, githubVisibleCount)),
+    [githubDisplayIssues, githubVisibleCount]
+  );
+
+  const linearShowIssues = useMemo(
+    () => linearDisplayIssues.slice(0, Math.max(10, linearVisibleCount)),
+    [linearDisplayIssues, linearVisibleCount]
+  );
+
+  const jiraShowIssues = useMemo(
+    () => jiraDisplayIssues.slice(0, Math.max(10, jiraVisibleCount)),
+    [jiraDisplayIssues, jiraVisibleCount]
+  );
+
+  // Scroll handlers
+  const handleGithubScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 16;
+      if (nearBottom && githubShowIssues.length < githubDisplayIssues.length) {
+        setGithubVisibleCount((prev) => Math.min(prev + 10, githubDisplayIssues.length));
+      }
+    },
+    [githubDisplayIssues.length, githubShowIssues.length]
+  );
+
+  const handleLinearScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 16;
+      if (nearBottom && linearShowIssues.length < linearDisplayIssues.length) {
+        setLinearVisibleCount((prev) => Math.min(prev + 10, linearDisplayIssues.length));
+      }
+    },
+    [linearDisplayIssues.length, linearShowIssues.length]
+  );
+
+  const handleJiraScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 16;
+      if (nearBottom && jiraShowIssues.length < jiraDisplayIssues.length) {
+        setJiraVisibleCount((prev) => Math.min(prev + 10, jiraDisplayIssues.length));
+      }
+    },
+    [jiraDisplayIssues.length, jiraShowIssues.length]
+  );
+
+  // Issue selection handlers
+  const handleGithubIssueSelect = useCallback((issue: GitHubIssueSummary | null) => {
+    setSelectedGithubIssue(issue);
+    if (issue) {
+      setSelectedLinearIssue(null);
+      setSelectedJiraIssue(null);
+    }
+    setHoveredAttachment(null);
+    setPlusMenuOpen(false);
+  }, []);
+
+  const handleLinearIssueSelect = useCallback((issue: LinearIssueSummary | null) => {
+    setSelectedLinearIssue(issue);
+    if (issue) {
+      setSelectedGithubIssue(null);
+      setSelectedJiraIssue(null);
+    }
+    setHoveredAttachment(null);
+    setPlusMenuOpen(false);
+  }, []);
+
+  const handleJiraIssueSelect = useCallback((issue: JiraIssueSummary | null) => {
+    setSelectedJiraIssue(issue);
+    if (issue) {
+      setSelectedGithubIssue(null);
+      setSelectedLinearIssue(null);
+    }
+    setHoveredAttachment(null);
+    setPlusMenuOpen(false);
+  }, []);
+
   return createPortal(
     <AnimatePresence>
       {isOpen && (
         <motion.div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 font-sans"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
           initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
@@ -545,18 +947,13 @@ const TaskModal: React.FC<TaskModalProps> = ({
             }
             className="w-full max-w-2xl"
           >
-            <Card
-              className="relative flex w-full flex-col overflow-visible rounded-2xl border border-white/10 bg-[#09090b] shadow-2xl shadow-black/50 ring-1 ring-white/5"
-            >
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-white/5 bg-white/[0.02] px-4 py-3">
+            <Card className="relative flex w-full flex-col overflow-visible rounded-xl border-border/70 shadow-xl">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/60 bg-muted/30 px-4 py-3">
                 <div className="flex min-w-0 flex-1 items-center gap-2 pr-4">
                   {isEditingHeader ? (
-                    <div className="flex flex-1 items-center gap-2 animate-in fade-in duration-200">
-                      <div className="relative flex-1 max-w-[220px]">
-                        <Hash
-                          size={12}
-                          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
-                        />
+                    <div className="flex flex-1 flex-col gap-2 animate-in fade-in duration-200">
+                      <div className="flex items-center gap-2">
+                      <div className="relative flex-1 max-w-[320px]">
                         <Input
                           ref={headerInputRef}
                           value={taskName}
@@ -572,60 +969,43 @@ const TaskModal: React.FC<TaskModalProps> = ({
                           aria-label="Task name"
                           aria-invalid={nameHasError}
                           aria-describedby="task-name-error"
-                          className={`h-8 border ${
+                          className={`h-8 px-2 py-1 text-sm ${
                             nameHasError
-                              ? 'border-red-500/60 focus-visible:border-red-500 focus-visible:ring-red-500/30'
-                              : 'border-blue-500/30 focus-visible:border-blue-500 focus-visible:ring-blue-500/30'
-                          } bg-black/40 px-2 py-1 pl-7 text-sm text-white focus-visible:ring-1`}
+                              ? 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive'
+                              : ''
+                          }`}
                         />
                       </div>
-                      <span className="text-zinc-600">/</span>
-                      <div className="relative flex-1 max-w-[220px]">
-                        <GitBranch
-                          size={12}
-                          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
-                        />
-                        <Input
-                          value={displayBranchName}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              setIsEditingHeader(false);
-                            }
-                          }}
-                          placeholder="branch-name"
-                          aria-label="Branch name"
-                          readOnly
-                          className="h-8 border border-blue-500/30 bg-black/40 px-2 py-1 pl-7 text-xs font-mono text-zinc-300 focus-visible:border-blue-500 focus-visible:ring-1 focus-visible:ring-blue-500/30"
-                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setIsEditingHeader(false)}
+                          className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        >
+                          <Check size={14} />
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setIsEditingHeader(false)}
-                        className="h-8 w-8 rounded-md text-green-400 hover:bg-green-400/10 hover:text-green-300"
-                      >
-                        <ArrowUp size={14} />
-                      </Button>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <GitBranch size={12} />
+                        <span className="truncate font-mono">{displayBranchName}</span>
+                      </div>
                     </div>
                   ) : (
                     <button
                       type="button"
                       onClick={() => setIsEditingHeader(true)}
-                      className="flex items-center gap-2 text-sm text-zinc-400 hover:bg-white/5 px-2 py-1 rounded-md transition-colors group text-left truncate"
+                      className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground group"
                       title="Click to edit Task & Branch"
                     >
-                      <span className="flex items-center justify-center w-6 h-6 rounded bg-blue-500/10 text-blue-400 shrink-0">
-                        <Sparkles size={14} />
+                      <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                        <span className="truncate">{displayTaskName}</span>
+                        <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </span>
-                      <span className="font-medium text-zinc-200 truncate">{displayTaskName}</span>
-                      <span className="text-zinc-600 shrink-0">•</span>
-                      <span className="font-mono text-xs text-zinc-500 flex items-center gap-1 truncate">
+                      <span className="flex items-center gap-1 text-xs font-mono text-muted-foreground">
                         <GitBranch size={10} />
-                        {displayBranchName}
+                        <span className="truncate">{displayBranchName}</span>
                       </span>
-                      <Pencil className="ml-1 h-3 w-3 opacity-0 text-zinc-500 transition-opacity group-hover:opacity-100" />
                     </button>
                   )}
                 </div>
@@ -636,7 +1016,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     variant="ghost"
                     size="icon"
                     onClick={onClose}
-                    className="h-8 w-8 rounded-md text-zinc-500 hover:bg-white/5 hover:text-red-400"
+                    className="h-8 w-8 rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                   >
                     <X size={16} />
                   </Button>
@@ -660,414 +1040,650 @@ const TaskModal: React.FC<TaskModalProps> = ({
                   className="flex flex-1 flex-col"
                 >
                   <div className="flex flex-col w-full min-h-[160px]">
-                    <div className="relative flex-1 p-5">
-                      <textarea
-                        ref={promptRef}
-                        value={initialPrompt}
-                        onChange={(e) => setInitialPrompt(e.target.value)}
-                        placeholder={promptPlaceholder}
-                        className={`w-full h-full min-h-[120px] bg-transparent text-lg text-zinc-100 placeholder:text-zinc-600 focus:outline-none resize-none leading-relaxed selection:bg-blue-500/30 ${
-                          !hasInitialPromptSupport ? 'opacity-50' : ''
-                        }`}
-                        autoFocus
-                        spellCheck={false}
-                        disabled={!hasInitialPromptSupport}
-                      />
-                    </div>
+                    <div className="relative flex-1 p-5 pb-16">
+                    {attachedIssue ? (
+                      <div
+                        key={attachedIssue.key}
+                        className="mb-4 flex max-w-[420px] items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
+                      >
+                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                          <img src={attachedIssue.logo} alt="" className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-foreground">
+                            {attachedIssue.label}
+                          </div>
+                          {attachedIssue.title ? (
+                            <div className="truncate text-xs text-muted-foreground">
+                              {attachedIssue.title}
+                            </div>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={clearAttachedIssue}
+                          className="h-7 w-7 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                          aria-label="Remove attached issue"
+                        >
+                          <X size={14} />
+                        </Button>
+                      </div>
+                    ) : null}
+                    <textarea
+                      ref={promptRef}
+                      value={initialPrompt}
+                      onChange={(e) => setInitialPrompt(e.target.value)}
+                      placeholder={promptPlaceholder}
+                      className={`w-full h-full min-h-[120px] bg-transparent text-lg text-foreground placeholder:text-muted-foreground focus:outline-none resize-none leading-relaxed selection:bg-primary/20 ${
+                        !hasInitialPromptSupport ? 'opacity-50' : ''
+                      }`}
+                      autoFocus
+                      spellCheck={false}
+                      disabled={!hasInitialPromptSupport}
+                    />
+                  </div>
                   </div>
 
                   {nameHasError ? (
-                    <p id="task-name-error" className="px-5 pb-1 text-xs text-red-400">
+                    <p id="task-name-error" className="px-5 pb-1 text-xs text-destructive">
                       {error}
                     </p>
                   ) : null}
 
-                  <div className="relative z-10 flex flex-col border-t border-white/5 bg-zinc-900/50">
-                    <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
-                      <button
-                        type="button"
-                        onClick={() => setActiveAttachment(null)}
-                        className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.06]"
-                      >
-                        <FileUp size={14} className="text-current" />
-                        Upload File
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!attachmentsDisabled) {
-                            toggleAttachment('linear');
-                          }
-                        }}
-                        disabled={attachmentsDisabled}
-                        aria-pressed={activeAttachment === 'linear'}
-                        className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          attachmentsDisabled
-                            ? 'border-white/10 bg-white/[0.03] text-zinc-500 opacity-50 cursor-not-allowed'
-                            : activeAttachment === 'linear'
-                              ? 'border-blue-500/40 bg-blue-500/10 text-blue-200'
-                              : selectedLinearIssue
-                                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                                : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full border border-current text-[9px] font-semibold">
-                          L
-                        </span>
-                        Linear Issue
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!attachmentsDisabled) {
-                            toggleAttachment('github');
-                          }
-                        }}
-                        disabled={attachmentsDisabled}
-                        aria-pressed={activeAttachment === 'github'}
-                        className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          attachmentsDisabled
-                            ? 'border-white/10 bg-white/[0.03] text-zinc-500 opacity-50 cursor-not-allowed'
-                            : activeAttachment === 'github'
-                              ? 'border-blue-500/40 bg-blue-500/10 text-blue-200'
-                              : selectedGithubIssue
-                                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                                : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <Github size={14} className="text-current" />
-                        GitHub Issue
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!attachmentsDisabled) {
-                            toggleAttachment('jira');
-                          }
-                        }}
-                        disabled={attachmentsDisabled}
-                        aria-pressed={activeAttachment === 'jira'}
-                        className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          attachmentsDisabled
-                            ? 'border-white/10 bg-white/[0.03] text-zinc-500 opacity-50 cursor-not-allowed'
-                            : activeAttachment === 'jira'
-                              ? 'border-blue-500/40 bg-blue-500/10 text-blue-200'
-                              : selectedJiraIssue
-                                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                                : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'
-                        }`}
-                      >
-                        <Trello size={14} className="text-current" />
-                        Jira Ticket
-                      </button>
+                  {/* Floating buttons overlay */}
+                  <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between p-4 bg-gradient-to-t from-background/95 to-transparent pointer-events-none">
+                    {/* Left side buttons */}
+                    <div className="flex items-center gap-2 pointer-events-auto">
+                      <div className="relative">
+                        <MultiProviderDropdown
+                          providerRuns={providerRuns}
+                          onChange={setProviderRuns}
+                          defaultProvider={defaultProviderFromSettings}
+                          className="!h-8 !min-w-[140px] !rounded-md !border !border-border/70 !bg-background/90 !px-3 !text-xs !text-foreground hover:!bg-background backdrop-blur-sm"
+                        />
+                      </div>
+
+                      <div className="relative pointer-events-auto">
+                        <Popover open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="attachment-menu-button flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground transition-colors hover:bg-background/90 hover:text-foreground backdrop-blur-sm"
+                              title="Add context"
+                            >
+                              <Plus size={16} />
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="start"
+                            side="bottom"
+                            className="w-48 rounded-lg border-border/70 bg-background/95 p-1 shadow-lg backdrop-blur-sm z-[200]"
+                          >
+                            <div className="relative">
+                              <button
+                                type="button"
+                                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground hover:bg-muted/60"
+                                onClick={() => {
+                                  handleAttachmentMenuSelect('files');
+                                  setPlusMenuOpen(false);
+                                }}
+                              >
+                                <img src={finderLogo} alt="" className="h-4 w-4" />
+                                Files and photos
+                              </button>
+                              <div className="my-1 h-px bg-border/60" />
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                    attachmentsDisabled
+                                      ? 'cursor-not-allowed text-muted-foreground/60'
+                                      : 'text-foreground hover:bg-muted/60'
+                                  }`}
+                                  onClick={() => {
+                                    if (!attachmentsDisabled) {
+                                      setPlusMenuOpen(false);
+                                      // Small delay to ensure dropdown closes before modal opens
+                                      setTimeout(() => setHoveredAttachment('github'), 50);
+                                    }
+                                  }}
+                                  disabled={attachmentsDisabled}
+                                >
+                                  <img src={githubLogo} alt="" className="h-4 w-4" />
+                                  GitHub issues
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                    attachmentsDisabled
+                                      ? 'cursor-not-allowed text-muted-foreground/60'
+                                      : 'text-foreground hover:bg-muted/60'
+                                  }`}
+                                  onClick={() => {
+                                    if (!attachmentsDisabled) {
+                                      setPlusMenuOpen(false);
+                                      // Small delay to ensure dropdown closes before modal opens
+                                      setTimeout(() => setHoveredAttachment('linear'), 50);
+                                    }
+                                  }}
+                                  disabled={attachmentsDisabled}
+                                >
+                                  <img src={linearLogo} alt="" className="h-4 w-4" />
+                                  Linear issues
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                    attachmentsDisabled
+                                      ? 'cursor-not-allowed text-muted-foreground/60'
+                                      : 'text-foreground hover:bg-muted/60'
+                                  }`}
+                                  onClick={() => {
+                                    if (!attachmentsDisabled) {
+                                      setPlusMenuOpen(false);
+                                      // Small delay to ensure dropdown closes before modal opens
+                                      setTimeout(() => setHoveredAttachment('jira'), 50);
+                                    }
+                                  }}
+                                  disabled={attachmentsDisabled}
+                                >
+                                  <img src={jiraLogo} alt="" className="h-4 w-4" />
+                                  Jira tickets
+                                </button>
+
+                                </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* GitHub Search Modal */}
+                      <AnimatePresence>
+                        {hoveredAttachment === 'github' && (
+                          <motion.div
+                            className="fixed inset-0 z-[500] flex items-center justify-center px-3"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setHoveredAttachment(null)}
+                          >
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+                            <motion.div
+                              data-modal-container
+                              className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-medium text-foreground">Select GitHub issue</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setHoveredAttachment(null);
+                                      setGithubDropdownOpen(false);
+                                    }}
+                                    className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                                <div className="p-4">
+                                  <div className="relative px-3 py-2">
+                                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input
+                                      placeholder="Search GitHub issues by title or assignee…"
+                                      value={githubSearchTerm}
+                                      onChange={(e) => setGithubSearchTerm(e.target.value)}
+                                      className="h-7 w-full border-none bg-transparent pl-9 pr-3 focus:outline-none focus:ring-0"
+                                      autoFocus
+                                      disabled={!isGithubConnected}
+                                    />
+                                  </div>
+                                  <Separator />
+                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleGithubScroll}>
+                                    {/* Clear option */}
+                                    <div
+                                      className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                      onClick={() => handleGithubIssueSelect(null)}
+                                    >
+                                      <span className="text-sm text-muted-foreground">None</span>
+                                    </div>
+                                    <Separator className="my-1" />
+
+                                    {/* GitHub issues list */}
+                                    {githubShowIssues.length > 0 ? (
+                                      githubShowIssues.map((issue) => (
+                                        <div
+                                          key={issue.number}
+                                          className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                          onClick={() => handleGithubIssueSelect(issue)}
+                                        >
+                                          <span className="flex min-w-0 items-center gap-2">
+                                            <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
+                                              <img src={githubLogo} alt="GitHub" className="h-3.5 w-3.5" />
+                                              <span className="text-[11px] font-medium text-foreground">#{issue.number}</span>
+                                            </span>
+                                            {issue.title ? (
+                                              <span className="ml-2 truncate text-muted-foreground">{issue.title}</span>
+                                            ) : null}
+                                          </span>
+                                        </div>
+                                      ))
+                                    ) : githubSearchTerm.trim() ? (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isGithubSearching ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Searching</span>
+                                          </div>
+                                        ) : (
+                                          `No issues found for "${githubSearchTerm}"`
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isGithubLoading ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Loading issues...</span>
+                                          </div>
+                                        ) : (
+                                          'No issues available'
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                {!isGithubConnected && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    onClick={() => void handleGithubConnect()}
+                                    disabled={githubLoading}
+                                  >
+                                    {githubLoading ? 'Connecting...' : 'Connect GitHub'}
+                                  </Button>
+                                )}
+                              </div>
+                            </motion.div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Linear Search Modal */}
+                      <AnimatePresence>
+                        {hoveredAttachment === 'linear' && (
+                          <motion.div
+                            className="fixed inset-0 z-[500] flex items-center justify-center px-3"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setHoveredAttachment(null)}
+                          >
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+                            <motion.div
+                              data-modal-container
+                              className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-medium text-foreground">Select Linear issue</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setHoveredAttachment(null);
+                                      setLinearDropdownOpen(false);
+                                    }}
+                                    className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                                <div className="p-4">
+                                  <div className="relative px-3 py-2">
+                                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input
+                                      placeholder="Search Linear issues by name, ID, or assignee…"
+                                      value={linearSearchTerm}
+                                      onChange={(e) => setLinearSearchTerm(e.target.value)}
+                                      className="h-7 w-full border-none bg-transparent pl-9 pr-3 focus:outline-none focus:ring-0"
+                                      autoFocus
+                                      disabled={!isLinearConnected}
+                                    />
+                                  </div>
+                                  <Separator />
+                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleLinearScroll}>
+                                    {/* Clear option */}
+                                    <div
+                                      className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                      onClick={() => handleLinearIssueSelect(null)}
+                                    >
+                                      <span className="text-sm text-muted-foreground">None</span>
+                                    </div>
+                                    <Separator className="my-1" />
+
+                                    {/* Linear issues list */}
+                                    {linearShowIssues.length > 0 ? (
+                                      linearShowIssues.map((issue) => (
+                                        <div
+                                          key={issue.id}
+                                          className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                          onClick={() => handleLinearIssueSelect(issue)}
+                                        >
+                                          <span className="flex min-w-0 items-center gap-2">
+                                            <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
+                                              <img src={linearLogo} alt="Linear" className="h-3.5 w-3.5" />
+                                              <span className="text-[11px] font-medium text-foreground">{issue.identifier}</span>
+                                            </span>
+                                            {issue.title ? (
+                                              <span className="ml-2 truncate text-muted-foreground">{issue.title}</span>
+                                            ) : null}
+                                          </span>
+                                        </div>
+                                      ))
+                                    ) : linearSearchTerm.trim() ? (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isLinearSearching ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Searching</span>
+                                          </div>
+                                        ) : (
+                                          `No issues found for "${linearSearchTerm}"`
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isLinearLoading ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Loading issues...</span>
+                                          </div>
+                                        ) : (
+                                          'No issues available'
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                {!isLinearConnected && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    onClick={() => setLinearSetupOpen(true)}
+                                  >
+                                    Connect Linear
+                                  </Button>
+                                )}
+                              </div>
+                            </motion.div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Jira Search Modal */}
+                      <AnimatePresence>
+                        {hoveredAttachment === 'jira' && (
+                          <motion.div
+                            className="fixed inset-0 z-[500] flex items-center justify-center px-3"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setHoveredAttachment(null)}
+                          >
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+                            <motion.div
+                              data-modal-container
+                              className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-medium text-foreground">Select Jira ticket</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setHoveredAttachment(null);
+                                      setJiraDropdownOpen(false);
+                                    }}
+                                    className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                                <div className="p-4">
+                                  <div className="relative px-3 py-2">
+                                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input
+                                      placeholder="Search Jira issues by key, summary, or assignee…"
+                                      value={jiraSearchTerm}
+                                      onChange={(e) => setJiraSearchTerm(e.target.value)}
+                                      className="h-7 w-full border-none bg-transparent pl-9 pr-3 focus:outline-none focus:ring-0"
+                                      autoFocus
+                                      disabled={!isJiraConnected}
+                                    />
+                                  </div>
+                                  <Separator />
+                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleJiraScroll}>
+                                    {/* Clear option */}
+                                    <div
+                                      className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                      onClick={() => handleJiraIssueSelect(null)}
+                                    >
+                                      <span className="text-sm text-muted-foreground">None</span>
+                                    </div>
+                                    <Separator className="my-1" />
+
+                                    {/* Jira issues list */}
+                                    {jiraShowIssues.length > 0 ? (
+                                      jiraShowIssues.map((issue) => (
+                                        <div
+                                          key={issue.key}
+                                          className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
+                                          onClick={() => handleJiraIssueSelect(issue)}
+                                        >
+                                          <span className="flex min-w-0 items-center gap-2">
+                                            <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
+                                              <img src={jiraLogo} alt="Jira" className="h-3.5 w-3.5" />
+                                              <span className="text-[11px] font-medium text-foreground">{issue.key}</span>
+                                            </span>
+                                            {issue.summary ? (
+                                              <span className="ml-2 truncate text-muted-foreground">{issue.summary}</span>
+                                            ) : null}
+                                          </span>
+                                        </div>
+                                      ))
+                                    ) : jiraSearchTerm.trim() ? (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isJiraSearching ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Searching</span>
+                                          </div>
+                                        ) : (
+                                          `No issues found for "${jiraSearchTerm}"`
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                                        {isJiraLoading ? (
+                                          <div className="flex items-center gap-2">
+                                            <Spinner size="sm" />
+                                            <span>Loading issues...</span>
+                                          </div>
+                                        ) : (
+                                          'No issues available'
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                {!isJiraConnected && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    onClick={() => setJiraSetupOpen(true)}
+                                  >
+                                    Connect Jira
+                                  </Button>
+                                )}
+                              </div>
+                            </motion.div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
 
-                    <AnimatePresence>
-                      {activeAttachment ? (
-                        <motion.div
-                          initial={shouldReduceMotion ? false : { opacity: 0, y: -6 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={
-                            shouldReduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -6 }
+                    {/* Right side buttons */}
+                    <div className="flex items-center gap-2 pointer-events-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (canToggleAutoApprove) {
+                            setAutoApprove(!autoApprove);
                           }
-                          transition={
-                            shouldReduceMotion
-                              ? { duration: 0 }
-                              : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
-                          }
-                          className="px-4 pb-3"
-                        >
-                          <div className="space-y-4 rounded-xl border border-white/10 bg-black/40 p-4">
-                            {activeAttachment === 'linear' ? (
-                              <div className="flex items-start gap-4">
-                                <Label
-                                  htmlFor="linear-issue"
-                                  className="w-32 shrink-0 pt-2 text-zinc-300"
-                                >
-                                  Linear issue
-                                </Label>
-                                <div className="flex min-w-0 flex-1 items-center gap-2">
-                                  <LinearIssueSelector
-                                    selectedIssue={selectedLinearIssue}
-                                    onIssueChange={(issue) => {
-                                      setSelectedLinearIssue(issue);
-                                      if (issue) {
-                                        setSelectedGithubIssue(null);
-                                        setSelectedJiraIssue(null);
-                                      }
-                                    }}
-                                    isOpen={isOpen}
-                                    disabled={
-                                      !hasInitialPromptSupport ||
-                                      !isLinearConnected ||
-                                      !!selectedGithubIssue ||
-                                      !!selectedJiraIssue
-                                    }
-                                    className="w-full"
-                                    autoOpen={autoOpenLinearSelector}
-                                    onAutoOpenHandled={() => setAutoOpenLinearSelector(false)}
-                                    placeholder={
-                                      isLinearConnected ? 'Select a Linear issue' : 'Select issue'
-                                    }
-                                  />
-                                  {!isLinearConnected && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-9 shrink-0 whitespace-nowrap border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
-                                      onClick={() => setLinearSetupOpen(true)}
-                                    >
-                                      Connect
-                                    </Button>
-                                  )}
-                                </div>
-                                <AnimatePresence>
-                                  {linearSetupOpen ? (
-                                    <motion.div
-                                      className="fixed inset-0 z-[130] flex items-center justify-center px-3"
-                                      initial={{ opacity: 0 }}
-                                      animate={{ opacity: 1 }}
-                                      exit={{ opacity: 0 }}
-                                      onClick={() => setLinearSetupOpen(false)}
-                                    >
-                                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-                                      <motion.div
-                                        className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
-                                        onClick={(event) => event.stopPropagation()}
-                                      >
-                                        <LinearSetupForm
-                                          apiKey={linearApiKey}
-                                          onChange={(value) => setLinearApiKey(value)}
-                                          onSubmit={() => void handleLinearConnect()}
-                                          onClose={() => setLinearSetupOpen(false)}
-                                          canSubmit={!!linearApiKey.trim()}
-                                          error={linearConnectionError}
-                                        />
-                                      </motion.div>
-                                    </motion.div>
-                                  ) : null}
-                                </AnimatePresence>
-                              </div>
-                            ) : null}
+                        }}
+                        disabled={!canToggleAutoApprove}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all border ${
+                          canToggleAutoApprove
+                            ? autoApprove
+                              ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20'
+                              : 'border-border/60 bg-background/90 text-muted-foreground hover:text-foreground hover:bg-background/95'
+                            : 'border-border/40 bg-background/90 text-muted-foreground/70 opacity-60 cursor-not-allowed'
+                        } backdrop-blur-sm`}
+                        title={
+                          canToggleAutoApprove
+                            ? autoApprove
+                              ? 'Permissions skipped (Unsafe)'
+                              : 'Permissions active (Safe)'
+                            : 'Selected provider does not support auto-approve'
+                        }
+                      >
+                        {autoApprove ? <ShieldAlert size={16} /> : <Shield size={16} />}
+                        <span className="text-xs font-medium">
+                          {autoApprove ? 'Unrestricted' : 'Safe Mode'}
+                        </span>
+                      </button>
 
-                            {activeAttachment === 'github' ? (
-                              <div className="flex items-start gap-4">
-                                <Label
-                                  htmlFor="github-issue"
-                                  className="w-32 shrink-0 pt-2 text-zinc-300"
-                                >
-                                  GitHub issue
-                                </Label>
-                                <div className="flex min-w-0 flex-1 items-center gap-2">
-                                  <GitHubIssueSelector
-                                    projectPath={projectPath || ''}
-                                    selectedIssue={selectedGithubIssue}
-                                    onIssueChange={(issue) => {
-                                      setSelectedGithubIssue(issue);
-                                      if (issue) {
-                                        setSelectedLinearIssue(null);
-                                        setSelectedJiraIssue(null);
-                                      }
-                                    }}
-                                    isOpen={isOpen}
-                                    disabled={
-                                      !hasInitialPromptSupport ||
-                                      !isGithubConnected ||
-                                      !!selectedJiraIssue ||
-                                      !!selectedLinearIssue
-                                    }
-                                    className="w-full"
-                                    placeholder={
-                                      isGithubConnected ? 'Select a GitHub issue' : 'Select issue'
-                                    }
-                                  />
-                                  {!isGithubConnected && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-9 shrink-0 whitespace-nowrap border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
-                                      onClick={() => void handleGithubConnect()}
-                                      disabled={githubLoading}
-                                    >
-                                      {githubLoading ? (
-                                        <>
-                                          <Spinner size="sm" className="mr-1" />
-                                          Connecting...
-                                        </>
-                                      ) : !githubInstalled ? (
-                                        'Install CLI'
-                                      ) : (
-                                        'Connect'
-                                      )}
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            ) : null}
-
-                            {activeAttachment === 'jira' ? (
-                              <div className="flex items-start gap-4">
-                                <Label
-                                  htmlFor="jira-issue"
-                                  className="w-32 shrink-0 pt-2 text-zinc-300"
-                                >
-                                  Jira issue
-                                </Label>
-                                <div className="flex min-w-0 flex-1 items-center gap-2">
-                                  <JiraIssueSelector
-                                    selectedIssue={selectedJiraIssue}
-                                    onIssueChange={(issue) => {
-                                      setSelectedJiraIssue(issue);
-                                      if (issue) {
-                                        setSelectedLinearIssue(null);
-                                        setSelectedGithubIssue(null);
-                                      }
-                                    }}
-                                    isOpen={isOpen}
-                                    disabled={
-                                      !hasInitialPromptSupport ||
-                                      !isJiraConnected ||
-                                      !!selectedLinearIssue ||
-                                      !!selectedGithubIssue
-                                    }
-                                    className="w-full"
-                                    placeholder={
-                                      isJiraConnected ? 'Select a Jira issue' : 'Select issue'
-                                    }
-                                  />
-                                  {!isJiraConnected && (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-9 shrink-0 whitespace-nowrap border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
-                                      onClick={() => setJiraSetupOpen(true)}
-                                    >
-                                      Connect
-                                    </Button>
-                                  )}
-                                </div>
-                                <AnimatePresence>
-                                  {jiraSetupOpen ? (
-                                    <motion.div
-                                      className="fixed inset-0 z-[130] flex items-center justify-center px-3"
-                                      initial={{ opacity: 0 }}
-                                      animate={{ opacity: 1 }}
-                                      exit={{ opacity: 0 }}
-                                      onClick={() => setJiraSetupOpen(false)}
-                                    >
-                                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-                                      <motion.div
-                                        className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
-                                        initial={{ opacity: 0, scale: 0.95 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
-                                        onClick={(event) => event.stopPropagation()}
-                                      >
-                                        <JiraSetupForm
-                                          site={jiraSite}
-                                          email={jiraEmail}
-                                          token={jiraToken}
-                                          onChange={(u) => {
-                                            if (typeof u.site === 'string') setJiraSite(u.site);
-                                            if (typeof u.email === 'string') setJiraEmail(u.email);
-                                            if (typeof u.token === 'string') setJiraToken(u.token);
-                                          }}
-                                          onClose={() => setJiraSetupOpen(false)}
-                                          canSubmit={
-                                            !!(
-                                              jiraSite.trim() &&
-                                              jiraEmail.trim() &&
-                                              jiraToken.trim()
-                                            )
-                                          }
-                                          error={jiraConnectionError}
-                                          onSubmit={() => void handleJiraConnect()}
-                                        />
-                                      </motion.div>
-                                    </motion.div>
-                                  ) : null}
-                                </AnimatePresence>
-                              </div>
-                            ) : null}
-                          </div>
-                        </motion.div>
-                      ) : null}
-                    </AnimatePresence>
-
-                    <div className="flex items-center justify-between px-4 py-3 gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
-                          <MultiProviderDropdown
-                            providerRuns={providerRuns}
-                            onChange={setProviderRuns}
-                            defaultProvider={defaultProviderFromSettings}
-                            className="!h-7 !w-auto !rounded-full !border !border-white/5 !bg-white/5 !px-3 !text-xs !text-zinc-300 hover:!bg-white/10 hover:!border-white/10"
-                          />
-                        </div>
-
-                        <div className="h-4 w-px bg-white/10 mx-1" />
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (canToggleAutoApprove) {
-                              setAutoApprove(!autoApprove);
-                            }
-                          }}
-                          disabled={!canToggleAutoApprove}
-                          className={`flex items-center gap-2 px-2 py-1.5 rounded-md transition-all border ${
-                            canToggleAutoApprove
-                              ? autoApprove
-                                ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
-                                : 'bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
-                              : 'border-transparent text-zinc-500 opacity-50 cursor-not-allowed'
-                          }`}
-                          title={
-                            canToggleAutoApprove
-                              ? autoApprove
-                                ? 'Permissions skipped (Unsafe)'
-                                : 'Permissions active (Safe)'
-                              : 'Selected provider does not support auto-approve'
-                          }
-                        >
-                          {autoApprove ? <ShieldAlert size={16} /> : <Shield size={16} />}
-                          <span className="text-xs font-medium">
-                            {autoApprove ? 'Unrestricted' : 'Safe Mode'}
-                          </span>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="submit"
-                          disabled={!!validate(taskName) || isCreating}
-                          className="flex items-center gap-2 pl-4 pr-3 py-2 text-sm font-semibold transition-all bg-blue-600 rounded-xl text-white hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:shadow-[0_0_20px_rgba(37,99,235,0.5)] active:scale-95"
-                        >
-                          {isCreating ? (
-                            <>
-                              <Spinner size="sm" className="mr-2" />
-                              Creating...
-                            </>
-                          ) : (
-                            <>
-                              Create Task
-                              <div className="flex items-center justify-center w-5 h-5 bg-white/20 rounded-md">
-                                <ArrowUp size={12} strokeWidth={3} />
-                              </div>
-                            </>
-                          )}
-                        </Button>
-                      </div>
+                      <Button
+                        type="submit"
+                        disabled={!!validate(taskName) || isCreating}
+                        className="gap-2 h-8 px-3 text-xs backdrop-blur-sm"
+                      >
+                        {isCreating ? (
+                          <>
+                            <Spinner size="sm" className="mr-1" />
+                            Creating...
+                          </>
+                        ) : (
+                          <>
+                            Create
+                            <div className="flex h-4 w-4 items-center justify-center rounded-md bg-primary-foreground/15">
+                              <ArrowUp size={10} strokeWidth={3} />
+                            </div>
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
+
+                  {/* Setup modals */}
+                  <AnimatePresence>
+                    {linearSetupOpen ? (
+                      <motion.div
+                        className="fixed inset-0 z-[130] flex items-center justify-center px-3"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setLinearSetupOpen(false)}
+                      >
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+                        <motion.div
+                          className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <LinearSetupForm
+                            apiKey={linearApiKey}
+                            onChange={(value) => setLinearApiKey(value)}
+                            onSubmit={() => void handleLinearConnect()}
+                            onClose={() => setLinearSetupOpen(false)}
+                            canSubmit={!!linearApiKey.trim()}
+                            error={linearConnectionError}
+                          />
+                        </motion.div>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+
+                  <AnimatePresence>
+                    {jiraSetupOpen ? (
+                      <motion.div
+                        className="fixed inset-0 z-[130] flex items-center justify-center px-3"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setJiraSetupOpen(false)}
+                      >
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+                        <motion.div
+                          className="relative z-10 w-full max-w-md rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-sm"
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <JiraSetupForm
+                            site={jiraSite}
+                            email={jiraEmail}
+                            token={jiraToken}
+                            onChange={(u) => {
+                              if (typeof u.site === 'string') setJiraSite(u.site);
+                              if (typeof u.email === 'string') setJiraEmail(u.email);
+                              if (typeof u.token === 'string') setJiraToken(u.token);
+                            }}
+                            onClose={() => setJiraSetupOpen(false)}
+                            canSubmit={
+                              !!(
+                                jiraSite.trim() &&
+                                jiraEmail.trim() &&
+                                jiraToken.trim()
+                              )
+                            }
+                            error={jiraConnectionError}
+                            onSubmit={() => void handleJiraConnect()}
+                          />
+                        </motion.div>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
                 </form>
               </CardContent>
             </Card>

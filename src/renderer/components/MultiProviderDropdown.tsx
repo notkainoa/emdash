@@ -92,9 +92,9 @@ export const MultiProviderDropdown: React.FC<MultiProviderDropdownProps> = ({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`flex h-9 w-full items-center justify-between rounded-md border-none bg-gray-100 px-3 text-sm dark:bg-gray-700 ${className}`}
+          className={`flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${className}`}
         >
-          <span className="flex items-center gap-2 truncate">
+          <span className="flex min-w-0 items-center gap-2 truncate">
             {singleProviderConfig && (
               <img
                 src={singleProviderConfig.logo}
@@ -104,13 +104,13 @@ export const MultiProviderDropdown: React.FC<MultiProviderDropdownProps> = ({
             )}
             {triggerText}
           </span>
-          <ChevronDown className="h-4 w-4 flex-shrink-0 opacity-50" />
+          <ChevronDown className="ml-2 h-4 w-4 flex-shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
         side="top"
-        className="z-[120] max-h-80 w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1"
+        className="z-[120] max-h-80 w-64 min-w-[12rem] overflow-y-auto p-1"
       >
         <TooltipProvider delayDuration={150}>
           {sortedProviders.map(([key, config]) => {
