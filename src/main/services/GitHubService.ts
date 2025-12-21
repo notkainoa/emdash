@@ -590,12 +590,28 @@ export class GitHubService {
    */
   async isAuthenticated(): Promise<boolean> {
     try {
-      const token = await this.getStoredToken();
+      let token = await this.getStoredToken();
 
+      // If Emdash doesn't have a stored token yet, but the user is already logged into gh,
+      // import the active gh token into keytar so the rest of the app can rely on it.
       if (!token) {
-        // No stored token, user needs to authenticate
-        return false;
+        try {
+          const { stdout: statusOut } = await execAsync('gh auth status');
+          const status = String(statusOut || '');
+          if (/Logged in to github\.com/i.test(status) || /Logged in to GitHub/i.test(status)) {
+            const { stdout: tokenOut } = await execAsync('gh auth token');
+            const ghToken = String(tokenOut || '').trim();
+            if (ghToken) {
+              await this.storeToken(ghToken);
+              token = ghToken;
+            }
+          }
+        } catch {
+          // If gh isn't available or isn't authenticated, fall through to false.
+        }
       }
+
+      if (!token) return false;
 
       // Test the token by making a simple API call
       const user = await this.getUserInfo(token);
