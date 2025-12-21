@@ -158,7 +158,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     title?: string;
     body?: string;
     base?: string;
-    head?: string;
     draft?: boolean;
     web?: boolean;
     fill?: boolean;
@@ -519,7 +518,10 @@ export interface ElectronAPI {
     viewerLogin?: string;
     defaultBranch?: string;
     hasFork?: boolean;
+    allowForking?: boolean;
     error?: string;
+    output?: string;
+    code?: string;
   }>;
   createPullRequest: (args: {
     taskPath: string;
@@ -539,7 +541,6 @@ export interface ElectronAPI {
     title?: string;
     body?: string;
     base?: string;
-    head?: string;
     draft?: boolean;
     web?: boolean;
     fill?: boolean;
@@ -550,6 +551,7 @@ export interface ElectronAPI {
     error?: string;
     fork?: string;
     baseRepo?: string;
+    code?: string;
   }>;
   connectToGitHub: (
     projectPath: string

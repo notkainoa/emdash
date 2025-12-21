@@ -17,119 +17,102 @@ import { databaseService } from '../services/DatabaseService';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-// Enhanced Git operation configuration
-const GIT_CONFIG = {
-  timeout: 60000, // 60 seconds for git operations
-  maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-  maxRetries: 3,
-  baseDelay: 1000, // 1 second base delay
-  maxDelay: 10000, // 10 seconds max delay
-};
+const EMDASH_GITHUB_KEYTAR_SERVICE = 'emdash-github';
+const EMDASH_GITHUB_KEYTAR_ACCOUNT = 'github-token';
 
-/**
- * Detect if an error is an EPIPE error (broken pipe)
- * These are typically transient network/connection issues
- */
-function isEpipeError(error: any): boolean {
-  const message = error?.message || error || '';
-  const code = error?.code;
-  const stderr = error?.stderr || '';
-
-  return (
-    code === 'EPIPE' ||
-    message.includes('EPIPE') ||
-    message.includes('write EPIPE') ||
-    message.includes('broken pipe') ||
-    stderr.includes('write EPIPE') ||
-    stderr.includes('broken pipe') ||
-    message.includes('remote hung up unexpectedly') ||
-    stderr.includes('remote hung up unexpectedly') ||
-    message.includes('connection reset by peer') ||
-    stderr.includes('connection reset by peer')
-  );
+async function getEmdashGitHubToken(): Promise<string | null> {
+  try {
+    const keytar = await import('keytar');
+    return await keytar.getPassword(EMDASH_GITHUB_KEYTAR_SERVICE, EMDASH_GITHUB_KEYTAR_ACCOUNT);
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Calculate exponential backoff delay for retries
- */
-function getRetryDelay(attempt: number): number {
-  const delay = Math.min(GIT_CONFIG.baseDelay * Math.pow(2, attempt), GIT_CONFIG.maxDelay);
-  // Add jitter to prevent thundering herd
-  return delay + Math.random() * 1000;
+function buildGhEnv(token?: string | null): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GH_PROMPT_DISABLED: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'Never',
+  };
+  if (token) env.GH_TOKEN = token;
+  return env;
 }
 
-/**
- * Enhanced execAsync with EPIPE detection and retry logic
- */
-async function execGitWithRetry(
-  command: string,
-  options?: { cwd?: string; timeout?: number; maxBuffer?: number }
-): Promise<{ stdout: string; stderr: string }> {
-  let lastError: any = null;
+function normalizeGhError(error: any): { userMessage: string; technical: string; code?: string } {
+  const errMsg = typeof error?.message === 'string' ? error.message : String(error);
+  const errStdout = typeof error?.stdout === 'string' ? error.stdout : '';
+  const errStderr = typeof error?.stderr === 'string' ? error.stderr : '';
+  const technical = [errMsg, errStdout, errStderr].filter(Boolean).join('\n').trim();
+  const lower = technical.toLowerCase();
 
-  for (let attempt = 0; attempt <= GIT_CONFIG.maxRetries; attempt++) {
-    try {
-      const opts = {
-        cwd: options?.cwd,
-        timeout: options?.timeout || GIT_CONFIG.timeout,
-        maxBuffer: options?.maxBuffer || GIT_CONFIG.maxBuffer,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GCM_INTERACTIVE: 'Never',
-        },
-      };
-
-      const result = await execAsync(command, opts);
-
-      // Log successful retry if it wasn't the first attempt
-      if (attempt > 0) {
-        log.info('Git operation succeeded after retry', {
-          command: command.split(' ')[0],
-          attempt: attempt + 1,
-          cwd: options?.cwd,
-        });
-      }
-
-      return result;
-    } catch (error: any) {
-      lastError = error;
-
-      // Only retry on EPIPE errors
-      if (!isEpipeError(error)) {
-        // Not a transient error, don't retry
-        throw error;
-      }
-
-      // If this is the last attempt, throw the error
-      if (attempt === GIT_CONFIG.maxRetries) {
-        log.error('Git operation failed after all retries', {
-          command: command.split(' ')[0],
-          attempts: attempt + 1,
-          cwd: options?.cwd,
-          error: error.message || error,
-        });
-        throw error;
-      }
-
-      // Log the retry attempt
-      const delay = getRetryDelay(attempt);
-      log.warn('Git operation failed with EPIPE, retrying...', {
-        command: command.split(' ')[0],
-        attempt: attempt + 1,
-        maxRetries: GIT_CONFIG.maxRetries + 1,
-        delay: Math.round(delay),
-        cwd: options?.cwd,
-        error: error.message || error,
-      });
-
-      // Wait before retrying
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+  if (error?.code === 'ENOENT') {
+    return {
+      userMessage: 'GitHub CLI (gh) is not installed. Install it or enable GitHub features in Emdash.',
+      technical,
+      code: 'GH_NOT_INSTALLED',
+    };
   }
 
-  // This should never be reached, but TypeScript needs it
-  throw lastError;
+  const restrictionRe =
+    /Auth App access restrictions|authorized OAuth apps|third-parties is limited/i;
+  if (restrictionRe.test(technical)) {
+    return {
+      userMessage: technical || 'GitHub organization restrictions blocked the GitHub CLI.',
+      technical,
+      code: 'ORG_AUTH_APP_RESTRICTED',
+    };
+  }
+
+  if (lower.includes('not authenticated') || lower.includes('you are not logged into')) {
+    return {
+      userMessage: 'GitHub is not connected. Connect GitHub in Emdash and try again.',
+      technical,
+      code: 'GITHUB_NOT_CONNECTED',
+    };
+  }
+
+  if (
+    lower.includes('saml') ||
+    lower.includes('sso') ||
+    lower.includes('organization has enabled or enforced saml sso')
+  ) {
+    return {
+      userMessage:
+        'Your organization requires SSO authorization for GitHub. Authorize access in your browser, then try again.',
+      technical,
+      code: 'GITHUB_SSO_REQUIRED',
+    };
+  }
+
+  if (
+    lower.includes('failed to connect') ||
+    lower.includes('could not resolve host') ||
+    lower.includes('network') ||
+    lower.includes('connection') ||
+    lower.includes('timed out')
+  ) {
+    return {
+      userMessage: 'Unable to reach GitHub. Check your internet connection and try again.',
+      technical,
+      code: 'GITHUB_NETWORK_ERROR',
+    };
+  }
+
+  if (
+    lower.includes('forking is disabled') ||
+    (lower.includes('fork') && lower.includes('disabled'))
+  ) {
+    return {
+      userMessage:
+        'Forking is disabled for this repository. Ask a maintainer to enable forking or grant you write access.',
+      technical,
+      code: 'FORKING_DISABLED',
+    };
+  }
+
+  return { userMessage: technical || errMsg || 'GitHub command failed', technical };
 }
 
 export function registerGitIpc() {
@@ -151,93 +134,6 @@ export function registerGitIpc() {
     return 'git';
   }
   const GIT = resolveGitBin();
-  const GH_ENV = {
-    ...process.env,
-    GH_PROMPT_DISABLED: '1',
-    GIT_TERMINAL_PROMPT: '0',
-    GCM_INTERACTIVE: 'Never',
-  };
-  const ghExecAsync = (
-    command: string,
-    opts?: { cwd?: string }
-  ): Promise<{ stdout: string; stderr: string }> => {
-    const execOpts = {
-      cwd: opts?.cwd,
-      timeout: GIT_CONFIG.timeout,
-      maxBuffer: GIT_CONFIG.maxBuffer,
-      env: GH_ENV,
-    };
-    return execAsync(command, execOpts);
-  };
-
-  /**
-   * Enhanced git operations with proper timeout and buffer configuration
-   */
-  const gitExec = (
-    command: string,
-    opts?: { cwd?: string; timeout?: number; maxBuffer?: number }
-  ): Promise<{ stdout: string; stderr: string }> => {
-    const execOpts = {
-      cwd: opts?.cwd,
-      timeout: opts?.timeout || GIT_CONFIG.timeout,
-      maxBuffer: opts?.maxBuffer || GIT_CONFIG.maxBuffer,
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GCM_INTERACTIVE: 'Never',
-      },
-    };
-    return execAsync(command, execOpts);
-  };
-
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  /**
-   * Validates GitHub repository name format (owner/repo)
-   * Allows only: alphanumerics, dashes, underscores, dots
-   */
-  function validateRepoName(repoName: string): { valid: boolean; error?: string } {
-    if (!repoName || typeof repoName !== 'string') {
-      return { valid: false, error: 'Repository name is required and must be a string' };
-    }
-
-    // Pattern: owner/repo where both parts contain only allowed chars
-    const pattern = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
-    if (!pattern.test(repoName)) {
-      return {
-        valid: false,
-        error:
-          'Invalid repository name format. Expected: owner/repo with only alphanumeric characters, dots, dashes, and underscores',
-      };
-    }
-
-    // Additional length checks (GitHub limits)
-    const parts = repoName.split('/');
-    if (parts[0].length > 39 || parts[1].length > 100) {
-      return {
-        valid: false,
-        error: 'Repository name exceeds GitHub length limits',
-      };
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Execute gh CLI with arguments array to avoid shell interpolation
-   */
-  async function ghExecFile(
-    args: string[],
-    opts?: { cwd?: string }
-  ): Promise<{ stdout: string; stderr: string }> {
-    const execOpts = {
-      cwd: opts?.cwd,
-      timeout: GIT_CONFIG.timeout,
-      maxBuffer: GIT_CONFIG.maxBuffer,
-      env: { ...GH_ENV },
-    };
-    return execFileAsync('gh', args, execOpts);
-  }
   // Git: Status (moved from Codex IPC)
   ipcMain.handle('git:get-status', async (_, taskPath: string) => {
     try {
@@ -325,19 +221,37 @@ export function registerGitIpc() {
     if (!taskPath) return { success: false, error: 'taskPath is required' };
 
     try {
-      await gitExec('git rev-parse --is-inside-work-tree', { cwd: taskPath });
-    } catch (error) {
+      await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+    } catch {
       return { success: false, error: 'Not a git repository' };
     }
 
+    const token = await getEmdashGitHubToken();
+    if (!token) {
+      return {
+        success: false,
+        error: 'GitHub is not connected in Emdash. Connect GitHub and try again.',
+        code: 'GITHUB_NOT_CONNECTED',
+      };
+    }
+
+    const env = buildGhEnv(token);
+
     try {
-      const { stdout } = await ghExecAsync(
-        'gh repo view --json nameWithOwner,viewerPermission,isFork,parent,defaultBranchRef',
-        { cwd: taskPath }
+      const { stdout: viewerOut } = await execFileAsync(
+        'gh',
+        ['api', 'user', '-q', '.login'],
+        { cwd: taskPath, env }
       );
-      const repo = JSON.parse(stdout || '{}');
+      const viewerLogin = (viewerOut || '').trim();
+
+      const { stdout: repoOut } = await execFileAsync(
+        'gh',
+        ['repo', 'view', '--json', 'nameWithOwner,isFork,parent,defaultBranchRef'],
+        { cwd: taskPath, env }
+      );
+      const repo = JSON.parse(repoOut || '{}');
       const nameWithOwner = repo?.nameWithOwner || '';
-      const viewerPermission = String(repo?.viewerPermission || '').toUpperCase();
       const isFork = !!repo?.isFork;
       const parentRepo =
         repo?.parent && typeof repo.parent.nameWithOwner === 'string'
@@ -348,26 +262,46 @@ export function registerGitIpc() {
         repo?.defaultBranchRef?.name && typeof repo.defaultBranchRef.name === 'string'
           ? repo.defaultBranchRef.name
           : 'main';
-      let viewerLogin = '';
-      try {
-        const { stdout: userOut } = await ghExecAsync('gh api user -q .login', { cwd: taskPath });
-        viewerLogin = (userOut || '').trim();
-      } catch {}
 
-      let hasFork = false;
-      if (viewerLogin && baseRepo) {
-        const repoName = baseRepo.split('/').pop() || baseRepo;
-        try {
-          await ghExecAsync(`gh repo view ${JSON.stringify(`${viewerLogin}/${repoName}`)}`, {
-            cwd: taskPath,
-          });
-          hasFork = true;
-        } catch {
-          hasFork = false;
-        }
+      if (!baseRepo || !viewerLogin) {
+        return { success: false, error: 'Unable to resolve GitHub repository or user.' };
       }
 
+      // Permission on the base repo (upstream if this repo is a fork)
+      const { stdout: permOut } = await execFileAsync(
+        'gh',
+        ['repo', 'view', baseRepo, '--json', 'viewerPermission', '-q', '.viewerPermission'],
+        { cwd: taskPath, env }
+      );
+      const viewerPermission = String(permOut || '').trim().toUpperCase();
       const canPushToBase = ['WRITE', 'MAINTAIN', 'ADMIN'].includes(viewerPermission);
+
+      const repoName = baseRepo.split('/').pop() || baseRepo;
+      const forkFullName = `${viewerLogin}/${repoName}`;
+
+      let hasFork = false;
+      try {
+        await execFileAsync('gh', ['repo', 'view', forkFullName], { cwd: taskPath, env });
+        hasFork = true;
+      } catch {
+        hasFork = false;
+      }
+
+      let allowForking: boolean | undefined = undefined;
+      if (!canPushToBase) {
+        try {
+          const { stdout: allowOut } = await execFileAsync(
+            'gh',
+            ['api', `repos/${baseRepo}`, '-q', '.allow_forking'],
+            { cwd: taskPath, env }
+          );
+          const val = (allowOut || '').trim();
+          if (val === 'true') allowForking = true;
+          if (val === 'false') allowForking = false;
+        } catch {
+          // Best-effort only
+        }
+      }
 
       return {
         success: true,
@@ -380,10 +314,11 @@ export function registerGitIpc() {
         viewerLogin,
         defaultBranch,
         hasFork,
+        allowForking,
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+    } catch (error: any) {
+      const norm = normalizeGhError(error);
+      return { success: false, error: norm.userMessage, output: norm.technical, code: norm.code };
     }
   });
 
@@ -457,7 +392,7 @@ export function registerGitIpc() {
 
         // Ensure branch is pushed to origin so PR includes latest commit
         try {
-          await execGitWithRetry('git push', { cwd: taskPath });
+          await execAsync('git push', { cwd: taskPath });
           outputs.push('git push: success');
         } catch (pushErr) {
           try {
@@ -465,31 +400,16 @@ export function registerGitIpc() {
               cwd: taskPath,
             });
             const branch = branchOut.trim();
-            await execGitWithRetry(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
+            await execAsync(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
               cwd: taskPath,
             });
             outputs.push(`git push --set-upstream origin ${branch}: success`);
           } catch (pushErr2) {
-            const errorDetails = pushErr2 instanceof Error ? pushErr2.message : String(pushErr2);
-            log.error('Failed to push branch before PR:', errorDetails);
-
-            // Provide more user-friendly error message based on error type
-            let userMessage =
-              'Failed to push branch to origin. Please check your Git remotes and authentication.';
-            if (isEpipeError(pushErr2)) {
-              userMessage =
-                'Network connection failed during push. Please check your internet connection and try again.';
-            } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
-              userMessage =
-                'Authentication failed. Please check your Git credentials and try again.';
-            } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
-              userMessage = 'Permission denied. You may not have push access to this repository.';
-            }
-
+            log.error('Failed to push branch before PR:', pushErr2 as string);
             return {
               success: false,
-              error: userMessage,
-              technicalError: errorDetails,
+              error:
+                'Failed to push branch to origin. Please check your Git remotes and authentication.',
             };
           }
         }
@@ -564,10 +484,10 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           // Non-fatal; continue
         }
 
-        // Build gh pr create command arguments to avoid shell injection
-        const args = ['pr', 'create'];
-        if (repoNameWithOwner) args.push('--repo', repoNameWithOwner);
-        if (title) args.push('--title', title);
+        // Build gh pr create command with explicit repo/base/head for reliability
+        const flags: string[] = [];
+        if (repoNameWithOwner) flags.push(`--repo ${JSON.stringify(repoNameWithOwner)}`);
+        if (title) flags.push(`--title ${JSON.stringify(title)}`);
 
         // Use temp file for body to properly handle newlines and multiline content
         let bodyFile: string | null = null;
@@ -579,35 +499,36 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
             );
             // Write body with actual newlines preserved
             fs.writeFileSync(bodyFile, body, 'utf8');
-            args.push('--body-file', bodyFile);
+            flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
           } catch (writeError) {
             log.warn('Failed to write body to temp file, falling back to --body flag', {
               writeError,
             });
             // Fallback to direct --body flag if temp file creation fails
-            args.push('--body', body);
+            flags.push(`--body ${JSON.stringify(body)}`);
           }
         }
 
-        if (base || defaultBranch) args.push('--base', base || defaultBranch);
+        if (base || defaultBranch) flags.push(`--base ${JSON.stringify(base || defaultBranch)}`);
         if (head) {
-          args.push('--head', head);
+          flags.push(`--head ${JSON.stringify(head)}`);
         } else if (currentBranch) {
           // Prefer owner:branch form when repo is known; otherwise branch name
           const headRef = repoNameWithOwner
             ? `${repoNameWithOwner.split('/')[0]}:${currentBranch}`
             : currentBranch;
-          args.push('--head', headRef);
+          flags.push(`--head ${JSON.stringify(headRef)}`);
         }
-        // Boolean flags as single entries
-        if (draft) args.push('--draft');
-        if (web) args.push('--web');
-        if (fill) args.push('--fill');
+        if (draft) flags.push('--draft');
+        if (web) flags.push('--web');
+        if (fill) flags.push('--fill');
+
+        const cmd = `gh pr create ${flags.join(' ')}`.trim();
 
         let stdout: string;
         let stderr: string;
         try {
-          const result = await execFileAsync('gh', args, { cwd: taskPath });
+          const result = await execAsync(cmd, { cwd: taskPath });
           stdout = result.stdout || '';
           stderr = result.stderr || '';
         } finally {
@@ -695,9 +616,7 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         fill?: boolean;
       });
 
-      if (!taskPath) {
-        return { success: false, error: 'taskPath is required' };
-      }
+      if (!taskPath) return { success: false, error: 'taskPath is required' };
 
       const outputs: string[] = [];
 
@@ -707,13 +626,35 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         return { success: false, error: 'Not a git repository' };
       }
 
+      const token = await getEmdashGitHubToken();
+      if (!token) {
+        return {
+          success: false,
+          error: 'GitHub is not connected in Emdash. Connect GitHub and try again.',
+          code: 'GITHUB_NOT_CONNECTED',
+        };
+      }
+      const env = buildGhEnv(token);
+
+      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
       try {
-        // Repo metadata and viewer
-        const { stdout: repoStdout } = await ghExecAsync(
-          'gh repo view --json nameWithOwner,isFork,parent,defaultBranchRef',
-          { cwd: taskPath }
+        // Viewer + repo metadata
+        const { stdout: viewerOut } = await execFileAsync('gh', ['api', 'user', '-q', '.login'], {
+          cwd: taskPath,
+          env,
+        });
+        const viewerLogin = (viewerOut || '').trim();
+        if (!viewerLogin) {
+          return { success: false, error: 'Unable to determine GitHub user. Reconnect GitHub.' };
+        }
+
+        const { stdout: repoOut } = await execFileAsync(
+          'gh',
+          ['repo', 'view', '--json', 'nameWithOwner,isFork,parent,defaultBranchRef'],
+          { cwd: taskPath, env }
         );
-        const repoInfo = JSON.parse(repoStdout || '{}');
+        const repoInfo = JSON.parse(repoOut || '{}');
         const nameWithOwner = repoInfo?.nameWithOwner || '';
         const parentRepo =
           repoInfo?.parent && typeof repoInfo.parent.nameWithOwner === 'string'
@@ -726,28 +667,54 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
             ? repoInfo.defaultBranchRef.name
             : 'main');
 
-        let viewerLogin = '';
+        if (!baseRepo) return { success: false, error: 'Unable to resolve upstream repository.' };
+
+        const repoName = baseRepo.split('/').pop() || baseRepo;
+        const forkFullName = `${viewerLogin}/${repoName}`;
+        const remoteName = 'emdash-fork';
+
+        // Preflight: if forking is disabled, fail early with a clear message.
         try {
-          const { stdout: userOut } = await ghExecAsync('gh api user -q .login', { cwd: taskPath });
-          viewerLogin = (userOut || '').trim();
+          const { stdout: allowOut } = await execFileAsync(
+            'gh',
+            ['api', `repos/${baseRepo}`, '-q', '.allow_forking'],
+            { cwd: taskPath, env }
+          );
+          if ((allowOut || '').trim() === 'false') {
+            return {
+              success: false,
+              error:
+                'Forking is disabled for this repository. Ask a maintainer to enable forking or grant you write access.',
+              code: 'FORKING_DISABLED',
+            };
+          }
         } catch {
-          return {
-            success: false,
-            error: 'GitHub authentication required. Please run gh auth login.',
-          };
+          // Best-effort only; continue.
         }
 
-        if (!baseRepo || !viewerLogin) {
-          return { success: false, error: 'Unable to resolve repository information' };
+        // Preflight: don't overwrite any existing remote that isn't our fork.
+        try {
+          const { stdout: urlOut } = await execAsync(`git remote get-url ${remoteName}`, {
+            cwd: taskPath,
+          });
+          const existingUrl = (urlOut || '').trim().replace(/\.git$/i, '');
+          const expectA = `github.com/${viewerLogin}/${repoName}`;
+          const expectB = `github.com:${viewerLogin}/${repoName}`;
+          if (!existingUrl.includes(expectA) && !existingUrl.includes(expectB)) {
+            return {
+              success: false,
+              error: `This repository already has a remote named "${remoteName}" pointing somewhere else. Rename or remove it, then try again.`,
+            };
+          }
+        } catch {
+          // Remote doesn't exist; that's fine.
         }
 
         // Determine current branch
         let currentBranch = '';
         try {
-          const { stdout: currentBranchOut } = await execAsync('git branch --show-current', {
-            cwd: taskPath,
-          });
-          currentBranch = (currentBranchOut || '').trim();
+          const { stdout } = await execAsync('git branch --show-current', { cwd: taskPath });
+          currentBranch = (stdout || '').trim();
         } catch {}
 
         // Create feature branch if on default
@@ -758,55 +725,18 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           currentBranch = name;
         }
 
-        // Stage and commit any pending changes (respect manual staging)
+        // Stage and commit pending changes (Create PR intends "all changes")
         try {
           const { stdout: statusOut } = await execAsync(
             'git status --porcelain --untracked-files=all',
             { cwd: taskPath }
           );
-          const hasWorkingChanges = Boolean(statusOut && statusOut.trim().length > 0);
-
-          const readStagedFiles = async () => {
-            try {
-              const { stdout } = await execAsync('git diff --cached --name-only', {
-                cwd: taskPath,
-              });
-              return (stdout || '')
-                .split('\n')
-                .map((f) => f.trim())
-                .filter(Boolean);
-            } catch {
-              return [];
-            }
-          };
-
-          let stagedFiles = await readStagedFiles();
-
-          // Only auto-stage everything when nothing is staged yet
-          if (hasWorkingChanges && stagedFiles.length === 0) {
+          if (statusOut && statusOut.trim().length > 0) {
             await execAsync('git add -A', { cwd: taskPath });
-          }
-
-          // Never commit plan mode artifacts
-          try {
-            await execAsync('git reset -q .emdash || true', { cwd: taskPath });
-          } catch {}
-          try {
-            await execAsync('git reset -q PLANNING.md || true', { cwd: taskPath });
-          } catch {}
-          try {
-            await execAsync('git reset -q planning.md || true', { cwd: taskPath });
-          } catch {}
-
-          stagedFiles = await readStagedFiles();
-
-          if (stagedFiles.length > 0) {
             try {
-              await execAsync(`git commit -m ${JSON.stringify(commitMessage)}`, {
-                cwd: taskPath,
-              });
+              await execAsync(`git commit -m ${JSON.stringify(commitMessage)}`, { cwd: taskPath });
             } catch (commitErr) {
-              const msg = commitErr as string;
+              const msg = String(commitErr);
               if (!/nothing to commit/i.test(msg)) throw commitErr;
             }
           }
@@ -814,197 +744,140 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           log.warn('Stage/commit step issue:', stageErr as string);
         }
 
-        // Guard: ensure there is at least one commit ahead of base
+        // Ensure fork exists + remote is configured (GH handles "already exists" cases)
+        outputs.push('Preparing your fork...');
         try {
-          const baseRef = defaultBranch;
-          const { stdout: aheadOut } = await execAsync(
-            `git rev-list --count ${JSON.stringify(`origin/${baseRef}`)}..HEAD`,
-            { cwd: taskPath }
+          await execFileAsync(
+            'gh',
+            [
+              'repo',
+              'fork',
+              baseRepo,
+              '--default-branch-only',
+              '--remote',
+              '--remote-name',
+              remoteName,
+            ],
+            { cwd: taskPath, env }
           );
-          const aheadCount = parseInt((aheadOut || '0').trim(), 10) || 0;
-          if (aheadCount <= 0) {
+        } catch (forkErr: any) {
+          const norm = normalizeGhError(forkErr);
+          const lower = norm.technical.toLowerCase();
+          const alreadyExists =
+            lower.includes('already exists') || lower.includes('fork already exists') || lower.includes('has already been forked');
+          if (!alreadyExists) {
             return {
               success: false,
-              error: `No commits to create a PR. Make a commit on current branch '${currentBranch}' ahead of base '${baseRef}'.`,
+              error: norm.userMessage,
+              output: [...outputs, norm.technical].filter(Boolean).join('\n'),
+              code: norm.code,
             };
           }
-        } catch {
-          // Non-fatal; continue
         }
 
-        // Determine protocol preference from origin
-        let preferSsh = true;
+        // If gh didn't add the remote (or gh couldn't), add it ourselves as a fallback.
         try {
-          const { stdout: originUrlOut } = await execAsync('git remote get-url origin', {
-            cwd: taskPath,
-          });
-          const originUrl = (originUrlOut || '').trim();
-          preferSsh = originUrl.startsWith('git@') || originUrl.startsWith('ssh://');
-        } catch {}
-
-        const repoParts = baseRepo.split('/');
-        const repoName = repoParts[1] || repoParts[0];
-        const forkFullName = `${viewerLogin}/${repoName}`;
-
-        const fetchForkUrl = async (): Promise<string | null> => {
-          // Validate forkFullName before use
-          const validation = validateRepoName(forkFullName);
-          if (!validation.valid) {
-            throw new Error(`Invalid repository name: ${validation.error}`);
-          }
+          await execAsync(`git remote get-url ${remoteName}`, { cwd: taskPath });
+        } catch {
+          // Determine protocol preference from origin
+          let preferSsh = true;
+          try {
+            const { stdout: originUrlOut } = await execAsync('git remote get-url origin', {
+              cwd: taskPath,
+            });
+            const originUrl = (originUrlOut || '').trim();
+            preferSsh = originUrl.startsWith('git@') || originUrl.startsWith('ssh://');
+          } catch {}
 
           const queries = preferSsh ? ['.ssh_url', '.clone_url'] : ['.clone_url', '.ssh_url'];
+          let forkRemoteUrl = '';
           for (const q of queries) {
             try {
-              const { stdout: urlOut } = await ghExecFile(
+              const { stdout: urlOut } = await execFileAsync(
+                'gh',
                 ['api', `repos/${forkFullName}`, '-q', q],
-                {
-                  cwd: taskPath,
-                }
+                { cwd: taskPath, env }
               );
               const url = (urlOut || '').trim();
-              if (url) return url;
+              if (url) {
+                forkRemoteUrl = url;
+                break;
+              }
             } catch {
               // keep trying
             }
           }
-          return null;
-        };
 
-        // Ensure fork exists
-        let forkRemoteUrl = await fetchForkUrl();
-        if (!forkRemoteUrl) {
-          // Validate baseRepo before use
-          const validation = validateRepoName(baseRepo);
-          if (!validation.valid) {
-            return { success: false, error: `Invalid repository name: ${validation.error}` };
+          if (!forkRemoteUrl) {
+            return {
+              success: false,
+              error:
+                'Your fork exists but is not ready yet. Please wait a moment and try again.',
+            };
           }
 
+          await execAsync(`git remote add ${remoteName} ${JSON.stringify(forkRemoteUrl)}`, {
+            cwd: taskPath,
+          });
+        }
+
+        // Push branch to fork (retry briefly in case GitHub is still warming up the fork)
+        const pushCommand = `git push --set-upstream ${remoteName} ${JSON.stringify(currentBranch)}`;
+        outputs.push('Pushing branch to your fork...');
+        for (let attempt = 0; attempt < 6; attempt++) {
           try {
-            await ghExecFile(
-              ['api', '-X', 'POST', `repos/${baseRepo}/forks`, '-f', 'default_branch_only=true'],
-              {
-                cwd: taskPath,
-              }
-            );
-          } catch (forkErr) {
-            const msg = forkErr instanceof Error ? forkErr.message : String(forkErr);
-            return { success: false, error: `Failed to create fork: ${msg}` };
-          }
+            await execAsync(pushCommand, { cwd: taskPath });
+            outputs.push(`git push: success (${remoteName}/${currentBranch})`);
+            break;
+          } catch (pushErr: any) {
+            const details = typeof pushErr?.message === 'string' ? pushErr.message : String(pushErr);
+            const lower = details.toLowerCase();
+            const likelyProvisioning =
+              lower.includes('repository not found') || lower.includes('not found') || lower.includes('404');
 
-          // Poll until fork is ready
-          for (let i = 0; i < 5; i++) {
-            await sleep(1000);
-            forkRemoteUrl = await fetchForkUrl();
-            if (forkRemoteUrl) break;
-          }
-        }
-
-        if (!forkRemoteUrl) {
-          return { success: false, error: 'Fork not available yet. Please try again.' };
-        }
-
-        // Ensure fork remote is set
-        try {
-          const { stdout: existingUrlOut } = await execAsync('git remote get-url fork', {
-            cwd: taskPath,
-          });
-          const existingUrl = (existingUrlOut || '').trim();
-          if (existingUrl !== forkRemoteUrl) {
-            await execAsync(`git remote set-url fork ${JSON.stringify(forkRemoteUrl)}`, {
-              cwd: taskPath,
-            });
-          }
-        } catch {
-          await execAsync(`git remote add fork ${JSON.stringify(forkRemoteUrl)}`, {
-            cwd: taskPath,
-          });
-        }
-
-        // Push branch to fork
-        try {
-          outputs.push('Pushing branch to fork...');
-          await execGitWithRetry(`git push --set-upstream fork ${JSON.stringify(currentBranch)}`, {
-            cwd: taskPath,
-          });
-          outputs.push(`git push --set-upstream fork ${currentBranch}: success`);
-        } catch (pushErr) {
-          const errorDetails = pushErr instanceof Error ? pushErr.message : String(pushErr);
-          log.error('Failed to push branch to fork:', errorDetails);
-
-          // Provide more user-friendly error message based on error type
-          let userMessage = `Failed to push branch to fork. Please check your Git remotes and authentication.`;
-          if (isEpipeError(pushErr)) {
-            userMessage =
-              'Network connection failed during push to fork. Please check your internet connection and try again.';
-          } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
-            userMessage = 'Authentication failed. Please check your Git credentials and try again.';
-          } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
-            userMessage = 'Permission denied. You may not have push access to the fork.';
-          } else if (
-            errorDetails.includes('Repository not found') ||
-            errorDetails.includes('404')
-          ) {
-            userMessage =
-              'Fork repository not found or not accessible. The fork may still be being created.';
-          }
-
-          return {
-            success: false,
-            error: userMessage,
-            output: errorDetails,
-            technicalError: errorDetails,
-          };
-        }
-
-        // Build gh pr create command arguments to avoid shell injection
-        const args = ['pr', 'create'];
-        if (baseRepo) args.push('--repo', baseRepo);
-        if (title) args.push('--title', title);
-
-        let bodyFile: string | null = null;
-        if (body) {
-          try {
-            bodyFile = path.join(
-              os.tmpdir(),
-              `gh-pr-body-${Date.now()}-${Math.random().toString(36).substring(7)}.txt`
-            );
-            fs.writeFileSync(bodyFile, body, 'utf8');
-            args.push('--body-file', bodyFile);
-          } catch (writeError) {
-            log.warn('Failed to write body to temp file, falling back to --body flag', {
-              writeError,
-            });
-            args.push('--body', body);
-          }
-        }
-
-        if (defaultBranch) args.push('--base', defaultBranch);
-
-        const headRef = `${viewerLogin}:${currentBranch}`;
-        args.push('--head', headRef);
-
-        // Boolean flags as single entries
-        if (draft) args.push('--draft');
-        if (web) args.push('--web');
-        if (fill) args.push('--fill');
-
-        let stdout: string;
-        let stderr: string;
-        try {
-          const result = await ghExecFile(args, { cwd: taskPath });
-          stdout = result.stdout || '';
-          stderr = result.stderr || '';
-        } finally {
-          if (bodyFile && fs.existsSync(bodyFile)) {
-            try {
-              fs.unlinkSync(bodyFile);
-            } catch (unlinkError) {
-              log.debug('Failed to delete temp body file', { bodyFile, unlinkError });
+            if (likelyProvisioning && attempt < 5) {
+              await sleep(1000 + attempt * 800);
+              continue;
             }
+
+            let userMessage =
+              'Failed to push your branch to the fork. Check your Git credentials and try again.';
+            if (details.toLowerCase().includes('permission denied') || details.includes('403')) {
+              userMessage =
+                "Permission denied pushing to your fork. Make sure Git is authenticated for your GitHub account.";
+            } else if (
+              lower.includes('could not resolve host') ||
+              lower.includes('failed to connect')
+            ) {
+              userMessage = 'Unable to reach GitHub to push your branch. Check your internet connection.';
+            }
+
+            return {
+              success: false,
+              error: userMessage,
+              output: [...outputs, details].filter(Boolean).join('\n'),
+              technicalError: details,
+            };
           }
         }
 
+        // Create PR (base repo is upstream, head is fork:userBranch)
+        const prArgs: string[] = [
+          'pr',
+          'create',
+          '--repo',
+          baseRepo,
+          '--head',
+          `${viewerLogin}:${currentBranch}`,
+        ];
+        if (defaultBranch) prArgs.push('--base', defaultBranch);
+        if (title) prArgs.push('--title', title);
+        if (body) prArgs.push('--body', body);
+        if (draft) prArgs.push('--draft');
+        if (web) prArgs.push('--web');
+        if (fill) prArgs.push('--fill');
+
+        const { stdout, stderr } = await execFileAsync('gh', prArgs, { cwd: taskPath, env });
         const out = [...outputs, (stdout || '').trim() || (stderr || '').trim()]
           .filter(Boolean)
           .join('\n');
@@ -1013,15 +886,12 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
         return { success: true, url, output: out, fork: forkFullName, baseRepo };
       } catch (error: any) {
-        const errMsg = typeof error?.message === 'string' ? error.message : String(error);
-        const errStdout = typeof error?.stdout === 'string' ? error.stdout : '';
-        const errStderr = typeof error?.stderr === 'string' ? error.stderr : '';
-        const combined = [errMsg, errStdout, errStderr].filter(Boolean).join('\n').trim();
-        log.error('Failed to create PR from fork:', combined || error);
+        const norm = normalizeGhError(error);
         return {
           success: false,
-          error: combined || errMsg || 'Failed to create PR from fork',
-          output: combined,
+          error: norm.userMessage,
+          output: [...outputs, norm.technical].filter(Boolean).join('\n'),
+          code: norm.code,
         };
       }
     }
@@ -1137,10 +1007,10 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
       try {
         // Ensure we're in a git repo
-        await gitExec('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+        await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
 
         // Determine current branch
-        const { stdout: currentBranchOut } = await gitExec('git branch --show-current', {
+        const { stdout: currentBranchOut } = await execAsync('git branch --show-current', {
           cwd: taskPath,
         });
         const currentBranch = (currentBranchOut || '').trim();
@@ -1231,38 +1101,11 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
 
         // Push current branch (set upstream if needed)
         try {
-          await execGitWithRetry('git push', { cwd: taskPath });
+          await execAsync('git push', { cwd: taskPath });
         } catch (pushErr) {
-          try {
-            await execGitWithRetry(
-              `git push --set-upstream origin ${JSON.stringify(activeBranch)}`,
-              {
-                cwd: taskPath,
-              }
-            );
-          } catch (pushErr2) {
-            const errorDetails = pushErr2 instanceof Error ? pushErr2.message : String(pushErr2);
-            log.error('Failed to push branch:', errorDetails);
-
-            // Provide more user-friendly error message based on error type
-            let userMessage =
-              'Failed to push branch to origin. Please check your Git remotes and authentication.';
-            if (isEpipeError(pushErr2)) {
-              userMessage =
-                'Network connection failed during push. Please check your internet connection and try again.';
-            } else if (errorDetails.includes('authentication') || errorDetails.includes('auth')) {
-              userMessage =
-                'Authentication failed. Please check your Git credentials and try again.';
-            } else if (errorDetails.includes('Permission denied') || errorDetails.includes('403')) {
-              userMessage = 'Permission denied. You may not have push access to this repository.';
-            }
-
-            return {
-              success: false,
-              error: userMessage,
-              technicalError: errorDetails,
-            };
-          }
+          await execAsync(`git push --set-upstream origin ${JSON.stringify(activeBranch)}`, {
+            cwd: taskPath,
+          });
         }
 
         const { stdout: out } = await execAsync('git status -sb', { cwd: taskPath });
