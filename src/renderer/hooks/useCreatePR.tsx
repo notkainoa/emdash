@@ -95,8 +95,12 @@ export function useCreatePR() {
           commitMessage,
           createBranchIfOnDefault,
           branchPrefix,
+          title: finalPrOptions.title,
+          body: finalPrOptions.body,
+          base: finalPrOptions.base,
+          draft: finalPrOptions.draft,
+          web: finalPrOptions.web,
           fill: true,
-          ...finalPrOptions,
         });
       } else {
         const commitRes = await api.gitCommitAndPush({

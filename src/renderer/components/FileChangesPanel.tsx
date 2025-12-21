@@ -20,7 +20,7 @@ import { useFileChanges } from '../hooks/useFileChanges';
 import { usePrStatus } from '../hooks/usePrStatus';
 import FileTypeIcon from './ui/file-type-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { Clipboard, Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
+import { Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
 
 type PrCapabilities = {
   success: boolean;
@@ -33,7 +33,10 @@ type PrCapabilities = {
   viewerLogin?: string;
   defaultBranch?: string;
   hasFork?: boolean;
+  allowForking?: boolean;
   error?: string;
+  output?: string;
+  code?: string;
 };
 
 interface FileChangesPanelProps {
@@ -103,15 +106,12 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
     try {
       const api: any = (window as any).electronAPI;
       if (!api?.getPrCapabilities) {
-        toast({
-          title: 'Create PR Unavailable',
-          description: 'PR creation is only available in the Electron app. Start via "npm run d".',
-          variant: 'destructive',
-        });
+        // Older builds: fall back to direct behavior (will show errors if push is blocked).
+        await createPR({ taskPath: taskId, onSuccess: handleCreatePrSuccess });
         return;
       }
 
-      const caps = await api.getPrCapabilities({ taskPath: taskId });
+      const caps = (await api.getPrCapabilities({ taskPath: taskId })) as PrCapabilities;
       if (!caps?.success) {
         toast({
           title: 'PR Check Failed',
@@ -121,13 +121,20 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
         return;
       }
 
-      if (caps.canPushToBase) {
-        await createPR({
-          taskPath: taskId,
-          onSuccess: handleCreatePrSuccess,
+      if (caps.allowForking === false && !caps.canPushToBase) {
+        toast({
+          title: 'Cannot Create PR',
+          description:
+            'Forking is disabled for this repository and you do not have write access. Ask a maintainer to enable forking or grant you write access.',
+          variant: 'destructive',
         });
+        return;
+      }
+
+      if (caps.canPushToBase) {
+        await createPR({ taskPath: taskId, onSuccess: handleCreatePrSuccess });
       } else {
-        setPrCapabilities(caps as PrCapabilities);
+        setPrCapabilities(caps);
         setShowForkDialog(true);
       }
     } catch (error: any) {
@@ -146,19 +153,19 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
         strategy: 'fork',
         onSuccess: handleCreatePrSuccess,
       });
+
       if (res?.success) {
         setShowForkDialog(false);
         setPrCapabilities(null);
       } else {
-        const details = res?.error || 'Unable to create a pull request from the fork.';
         toast({
           title: 'Fork PR Failed',
-          description: details,
+          description: res?.error || 'Unable to create a pull request from your fork.',
           variant: 'destructive',
         });
       }
     } catch (error: any) {
-      const message = error?.message || 'Unable to create a pull request from the fork.';
+      const message = error?.message || 'Unable to create a pull request from your fork.';
       toast({
         title: 'Fork PR Failed',
         description: message,
@@ -597,71 +604,35 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
         />
       )}
       <AlertDialog open={showForkDialog} onOpenChange={setShowForkDialog}>
-        <AlertDialogContent className="max-w-lg">
+        <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-lg">
+            <AlertDialogTitle>Use your fork to open the PR?</AlertDialogTitle>
+            <AlertDialogDescription>
               {prCapabilities?.baseRepo
-                ? `You don't have write access to ${prCapabilities.baseRepo}`
-                : "You don't have write access to this repository"}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-sm leading-relaxed">
-              {prCapabilities?.baseRepo
-                ? prCapabilities.hasFork
-                  ? `Use your fork to open the PR?`
-                  : `Create a fork then open the PR?`
-                : prCapabilities?.hasFork
-                  ? 'Use your fork to open the PR?'
-                  : 'Create a fork then open the PR?'}
+                ? `You don't have write access to ${prCapabilities.baseRepo}. We'll push your branch to your fork and open the PR from there.`
+                : "You don't have write access to this repository. We'll push your branch to your fork and open the PR from there."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-3 text-sm text-gray-700 dark:text-gray-200">
-            <div className="rounded-lg border border-border/70 bg-muted/40 px-4 py-3 text-sm shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-200">
-                    !
-                  </span>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Upstream
-                    </div>
-                    <div className="font-semibold text-gray-900 dark:text-gray-50">
-                      {prCapabilities?.baseRepo || 'unknown repo'}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-red-600 dark:text-red-300">
-                  No push access
-                </span>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
-                    <Clipboard className="h-3.5 w-3.5" />
-                  </span>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      {prCapabilities?.hasFork ? 'Your fork' : 'Create fork'}
-                    </div>
-                    <div className="font-semibold text-gray-900 dark:text-gray-50">
-                      {prCapabilities?.viewerLogin
-                        ? `${prCapabilities?.viewerLogin}/${
-                            (prCapabilities?.baseRepo || '').split('/').pop() || 'repo'
-                          }`
-                        : (prCapabilities?.baseRepo || '').split('/').pop() || 'repo'}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-emerald-700 dark:text-emerald-200">
-                  {prCapabilities?.hasFork ? 'Push planned' : 'Fork + push planned'}
-                </span>
-              </div>
+          <div className="text-sm text-gray-700 dark:text-gray-200">
+            <div>
+              GitHub account:{' '}
+              <span className="font-medium">
+                {prCapabilities?.viewerLogin ? prCapabilities.viewerLogin : 'unknown'}
+              </span>
+            </div>
+            <div>
+              Fork:{' '}
+              <span className="font-medium">
+                {prCapabilities?.viewerLogin
+                  ? `${prCapabilities.viewerLogin}/${(prCapabilities?.baseRepo || '').split('/').pop() || 'repo'}`
+                  : (prCapabilities?.baseRepo || '').split('/').pop() || 'repo'}
+              </span>
+              {prCapabilities?.hasFork ? ' (already exists)' : ' (will be created)'}
             </div>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isCreatingForkPR}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               disabled={isCreatingForkPR}
               onClick={() => {
                 void handleConfirmForkPr();
@@ -669,7 +640,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
             >
               <span className="inline-flex items-center gap-2">
                 {isCreatingForkPR ? <Spinner size="sm" /> : null}
-                {prCapabilities?.hasFork ? 'Use my fork & create PR' : 'Fork & create PR'}
+                {prCapabilities?.hasFork ? 'Use my fork' : 'Create fork & open PR'}
               </span>
             </AlertDialogAction>
           </AlertDialogFooter>
