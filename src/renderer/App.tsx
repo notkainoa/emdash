@@ -971,7 +971,8 @@ const AppContent: React.FC = () => {
     linkedLinearIssue: LinearIssueSummary | null = null,
     linkedGithubIssue: GitHubIssueSummary | null = null,
     linkedJiraIssue: JiraIssueSummary | null = null,
-    autoApprove?: boolean
+    autoApprove?: boolean,
+    branchName?: string
   ) => {
     if (!selectedProject) return;
 
@@ -1103,11 +1104,21 @@ const AppContent: React.FC = () => {
           for (let instanceIdx = 1; instanceIdx <= runs; instanceIdx++) {
             const instanceSuffix = runs > 1 ? `-${instanceIdx}` : '';
             const variantName = `${taskName}-${provider.toLowerCase()}${instanceSuffix}`;
+
+            // Create variant branch name if branchName is provided
+            let variantBranchName;
+            if (branchName) {
+              // Append variant suffix to the base branch name
+              const baseBranchName = branchName;
+              variantBranchName = `${baseBranchName}${instanceSuffix}`;
+            }
+
             const worktreeResult = await window.electronAPI.worktreeCreate({
               projectPath: selectedProject.path,
               taskName: variantName,
               projectId: selectedProject.id,
               autoApprove,
+              branchName: variantBranchName,
             });
             if (!worktreeResult?.success || !worktreeResult.worktree) {
               throw new Error(
@@ -1169,6 +1180,7 @@ const AppContent: React.FC = () => {
           taskName,
           projectId: selectedProject.id,
           autoApprove,
+          branchName,
         });
 
         if (!worktreeResult.success) {

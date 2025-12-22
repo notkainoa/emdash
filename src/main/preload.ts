@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     taskName: string;
     projectId: string;
     autoApprove?: boolean;
+    branchName?: string;
   }) => ipcRenderer.invoke('worktree:create', args),
   worktreeList: (args: { projectPath: string }) => ipcRenderer.invoke('worktree:list', args),
   worktreeRemove: (args: {
@@ -437,6 +438,7 @@ export interface ElectronAPI {
     taskName: string;
     projectId: string;
     autoApprove?: boolean;
+    branchName?: string;
   }) => Promise<{ success: boolean; worktree?: any; error?: string }>;
   worktreeList: (args: {
     projectPath: string;

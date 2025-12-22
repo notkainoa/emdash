@@ -86,7 +86,8 @@ interface TaskModalProps {
     linkedLinearIssue?: LinearIssueSummary | null,
     linkedGithubIssue?: GitHubIssueSummary | null,
     linkedJiraIssue?: import('../types/jira').JiraIssueSummary | null,
-    autoApprove?: boolean
+    autoApprove?: boolean,
+    branchName?: string
   ) => void;
   projectName: string;
   defaultBranch: string;
@@ -632,7 +633,8 @@ const TaskModal: React.FC<TaskModalProps> = ({
           selectedLinearIssue,
           selectedGithubIssue,
           selectedJiraIssue,
-          hasAutoApproveSupport ? autoApprove : false
+          hasAutoApproveSupport ? autoApprove : false,
+          displayBranchName
         );
         onClose();
       } catch (error) {
