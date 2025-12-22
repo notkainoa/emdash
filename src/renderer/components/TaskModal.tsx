@@ -32,6 +32,13 @@ import linearLogo from '../../assets/images/linear.png';
 import githubLogo from '../../assets/images/github.png';
 import jiraLogo from '../../assets/images/jira.png';
 import finderLogo from '../../assets/images/finder.png';
+import LinearSetupForm from './integrations/LinearSetupForm';
+import JiraSetupForm from './integrations/JiraSetupForm';
+import { LinearIssueSelector } from './LinearIssueSelector';
+import { GitHubIssueSelector } from './GitHubIssueSelector';
+import JiraIssueSelector from './JiraIssueSelector';
+import { type JiraIssueSummary } from '../types/jira';
+import { useGithubAuth } from '../hooks/useGithubAuth';
 import {
   generateFriendlyTaskName,
   normalizeTaskName,
@@ -68,14 +75,6 @@ const renderBranchNameTemplate = (
   const replaced = template.replace(/\{slug\}/g, ctx.slug).replace(/\{timestamp\}/g, ctx.timestamp);
   return sanitizeBranchName(replaced);
 };
-
-import LinearSetupForm from './integrations/LinearSetupForm';
-import JiraSetupForm from './integrations/JiraSetupForm';
-import { LinearIssueSelector } from './LinearIssueSelector';
-import { GitHubIssueSelector } from './GitHubIssueSelector';
-import JiraIssueSelector from './JiraIssueSelector';
-import { type JiraIssueSummary } from '../types/jira';
-import { useGithubAuth } from '../hooks/useGithubAuth';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -780,19 +779,46 @@ const TaskModal: React.FC<TaskModalProps> = ({
 
   // Auto-load issues when modals open (only if connected)
   useEffect(() => {
-    if (isGithubConnected && hoveredAttachment === 'github' && githubIssues.length === 0 && !isGithubLoading) {
+    if (
+      isGithubConnected &&
+      hoveredAttachment === 'github' &&
+      githubIssues.length === 0 &&
+      !isGithubLoading
+    ) {
       loadGithubIssues();
     }
-  }, [hoveredAttachment, githubIssues.length, isGithubLoading, loadGithubIssues, isGithubConnected]);
+  }, [
+    hoveredAttachment,
+    githubIssues.length,
+    isGithubLoading,
+    loadGithubIssues,
+    isGithubConnected,
+  ]);
 
   useEffect(() => {
-    if (isLinearConnected && hoveredAttachment === 'linear' && linearIssues.length === 0 && !isLinearLoading) {
+    if (
+      isLinearConnected &&
+      hoveredAttachment === 'linear' &&
+      linearIssues.length === 0 &&
+      !isLinearLoading
+    ) {
       loadLinearIssues();
     }
-  }, [hoveredAttachment, linearIssues.length, isLinearLoading, loadLinearIssues, isLinearConnected]);
+  }, [
+    hoveredAttachment,
+    linearIssues.length,
+    isLinearLoading,
+    loadLinearIssues,
+    isLinearConnected,
+  ]);
 
   useEffect(() => {
-    if (isJiraConnected && hoveredAttachment === 'jira' && jiraIssues.length === 0 && !isJiraLoading) {
+    if (
+      isJiraConnected &&
+      hoveredAttachment === 'jira' &&
+      jiraIssues.length === 0 &&
+      !isJiraLoading
+    ) {
       loadJiraIssues();
     }
   }, [hoveredAttachment, jiraIssues.length, isJiraLoading, loadJiraIssues, isJiraConnected]);
