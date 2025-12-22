@@ -8,6 +8,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Spinner } from './ui/spinner';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import {
   ArrowUp,
   Check,
@@ -777,24 +778,24 @@ const TaskModal: React.FC<TaskModalProps> = ({
     }
   }, []);
 
-  // Auto-load issues when modals open
+  // Auto-load issues when modals open (only if connected)
   useEffect(() => {
-    if (hoveredAttachment === 'github' && githubIssues.length === 0 && !isGithubLoading) {
+    if (isGithubConnected && hoveredAttachment === 'github' && githubIssues.length === 0 && !isGithubLoading) {
       loadGithubIssues();
     }
-  }, [hoveredAttachment, githubIssues.length, isGithubLoading, loadGithubIssues]);
+  }, [hoveredAttachment, githubIssues.length, isGithubLoading, loadGithubIssues, isGithubConnected]);
 
   useEffect(() => {
-    if (hoveredAttachment === 'linear' && linearIssues.length === 0 && !isLinearLoading) {
+    if (isLinearConnected && hoveredAttachment === 'linear' && linearIssues.length === 0 && !isLinearLoading) {
       loadLinearIssues();
     }
-  }, [hoveredAttachment, linearIssues.length, isLinearLoading, loadLinearIssues]);
+  }, [hoveredAttachment, linearIssues.length, isLinearLoading, loadLinearIssues, isLinearConnected]);
 
   useEffect(() => {
-    if (hoveredAttachment === 'jira' && jiraIssues.length === 0 && !isJiraLoading) {
+    if (isJiraConnected && hoveredAttachment === 'jira' && jiraIssues.length === 0 && !isJiraLoading) {
       loadJiraIssues();
     }
-  }, [hoveredAttachment, jiraIssues.length, isJiraLoading, loadJiraIssues]);
+  }, [hoveredAttachment, jiraIssues.length, isJiraLoading, loadJiraIssues, isJiraConnected]);
 
   // Debounced search handling
   useEffect(() => {
@@ -1136,65 +1137,98 @@ const TaskModal: React.FC<TaskModalProps> = ({
                               </button>
                               <div className="my-1 h-px bg-border/60" />
                               <div className="relative">
-                                <button
-                                  type="button"
-                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
-                                    attachmentsDisabled
-                                      ? 'cursor-not-allowed text-muted-foreground/60'
-                                      : 'text-foreground hover:bg-muted/60'
-                                  }`}
-                                  onClick={() => {
-                                    if (!attachmentsDisabled) {
-                                      setPlusMenuOpen(false);
-                                      // Small delay to ensure dropdown closes before modal opens
-                                      setTimeout(() => setHoveredAttachment('github'), 50);
-                                    }
-                                  }}
-                                  disabled={attachmentsDisabled}
-                                >
-                                  <img src={githubLogo} alt="" className="h-4 w-4" />
-                                  GitHub issues
-                                </button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                        !isGithubConnected
+                                          ? 'cursor-not-allowed opacity-50'
+                                          : attachmentsDisabled
+                                            ? 'cursor-not-allowed text-muted-foreground/60'
+                                            : 'text-foreground hover:bg-muted/60'
+                                      }`}
+                                      onClick={() => {
+                                        if (!attachmentsDisabled && isGithubConnected) {
+                                          setPlusMenuOpen(false);
+                                          // Small delay to ensure dropdown closes before modal opens
+                                          setTimeout(() => setHoveredAttachment('github'), 50);
+                                        }
+                                      }}
+                                      disabled={attachmentsDisabled || !isGithubConnected}
+                                    >
+                                      <img src={githubLogo} alt="" className="h-4 w-4" />
+                                      GitHub issues
+                                    </button>
+                                  </TooltipTrigger>
+                                  {!isGithubConnected && (
+                                    <TooltipContent side="right" className="text-xs">
+                                      Connect GitHub in settings
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
 
-                                <button
-                                  type="button"
-                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
-                                    attachmentsDisabled
-                                      ? 'cursor-not-allowed text-muted-foreground/60'
-                                      : 'text-foreground hover:bg-muted/60'
-                                  }`}
-                                  onClick={() => {
-                                    if (!attachmentsDisabled) {
-                                      setPlusMenuOpen(false);
-                                      // Small delay to ensure dropdown closes before modal opens
-                                      setTimeout(() => setHoveredAttachment('linear'), 50);
-                                    }
-                                  }}
-                                  disabled={attachmentsDisabled}
-                                >
-                                  <img src={linearLogo} alt="" className="h-4 w-4" />
-                                  Linear issues
-                                </button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                        !isLinearConnected
+                                          ? 'cursor-not-allowed opacity-50'
+                                          : attachmentsDisabled
+                                            ? 'cursor-not-allowed text-muted-foreground/60'
+                                            : 'text-foreground hover:bg-muted/60'
+                                      }`}
+                                      onClick={() => {
+                                        if (!attachmentsDisabled && isLinearConnected) {
+                                          setPlusMenuOpen(false);
+                                          // Small delay to ensure dropdown closes before modal opens
+                                          setTimeout(() => setHoveredAttachment('linear'), 50);
+                                        }
+                                      }}
+                                      disabled={attachmentsDisabled || !isLinearConnected}
+                                    >
+                                      <img src={linearLogo} alt="" className="h-4 w-4" />
+                                      Linear issues
+                                    </button>
+                                  </TooltipTrigger>
+                                  {!isLinearConnected && (
+                                    <TooltipContent side="right" className="text-xs">
+                                      Connect Linear in settings
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
 
-                                <button
-                                  type="button"
-                                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
-                                    attachmentsDisabled
-                                      ? 'cursor-not-allowed text-muted-foreground/60'
-                                      : 'text-foreground hover:bg-muted/60'
-                                  }`}
-                                  onClick={() => {
-                                    if (!attachmentsDisabled) {
-                                      setPlusMenuOpen(false);
-                                      // Small delay to ensure dropdown closes before modal opens
-                                      setTimeout(() => setHoveredAttachment('jira'), 50);
-                                    }
-                                  }}
-                                  disabled={attachmentsDisabled}
-                                >
-                                  <img src={jiraLogo} alt="" className="h-4 w-4" />
-                                  Jira tickets
-                                </button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm ${
+                                        !isJiraConnected
+                                          ? 'cursor-not-allowed opacity-50'
+                                          : attachmentsDisabled
+                                            ? 'cursor-not-allowed text-muted-foreground/60'
+                                            : 'text-foreground hover:bg-muted/60'
+                                      }`}
+                                      onClick={() => {
+                                        if (!attachmentsDisabled && isJiraConnected) {
+                                          setPlusMenuOpen(false);
+                                          // Small delay to ensure dropdown closes before modal opens
+                                          setTimeout(() => setHoveredAttachment('jira'), 50);
+                                        }
+                                      }}
+                                      disabled={attachmentsDisabled || !isJiraConnected}
+                                    >
+                                      <img src={jiraLogo} alt="" className="h-4 w-4" />
+                                      Jira tickets
+                                    </button>
+                                  </TooltipTrigger>
+                                  {!isJiraConnected && (
+                                    <TooltipContent side="right" className="text-xs">
+                                      Connect Jira in settings
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
                               </div>
                             </div>
                           </PopoverContent>
