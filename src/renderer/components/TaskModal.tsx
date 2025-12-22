@@ -64,9 +64,7 @@ const renderBranchNameTemplate = (
   template: string,
   ctx: { slug: string; timestamp: string }
 ): string => {
-  const replaced = template
-    .replace(/\{slug\}/g, ctx.slug)
-    .replace(/\{timestamp\}/g, ctx.timestamp);
+  const replaced = template.replace(/\{slug\}/g, ctx.slug).replace(/\{timestamp\}/g, ctx.timestamp);
   return sanitizeBranchName(replaced);
 };
 
@@ -142,7 +140,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
     null
   );
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
-  const [hoveredAttachment, setHoveredAttachment] = useState<'github' | 'linear' | 'jira' | null>(null);
+  const [hoveredAttachment, setHoveredAttachment] = useState<'github' | 'linear' | 'jira' | null>(
+    null
+  );
   const [githubDropdownOpen, setGithubDropdownOpen] = useState(false);
   const [linearDropdownOpen, setLinearDropdownOpen] = useState(false);
   const [jiraDropdownOpen, setJiraDropdownOpen] = useState(false);
@@ -207,12 +207,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
       return `e.g. Fix the attached Jira ticket ${selectedJiraIssue.key} — describe any constraints.`;
     }
     return 'Describe the task or changes you want to make...';
-  }, [
-    hasInitialPromptSupport,
-    selectedLinearIssue,
-    selectedGithubIssue,
-    selectedJiraIssue,
-  ]);
+  }, [hasInitialPromptSupport, selectedLinearIssue, selectedGithubIssue, selectedJiraIssue]);
 
   useEffect(() => {
     if (!promptRef.current) return;
@@ -682,26 +677,29 @@ const TaskModal: React.FC<TaskModalProps> = ({
     }
   }, [projectPath]);
 
-  const searchGithubIssues = useCallback(async (term: string) => {
-    if (!term.trim() || !api?.githubIssuesSearch || !projectPath) {
-      setGithubSearchResults([]);
-      return;
-    }
-    setIsGithubSearching(true);
-    try {
-      const result = await api.githubIssuesSearch(projectPath, term.trim(), 20);
-      if (result?.success) {
-        setGithubSearchResults(result.issues ?? []);
-      } else {
+  const searchGithubIssues = useCallback(
+    async (term: string) => {
+      if (!term.trim() || !api?.githubIssuesSearch || !projectPath) {
         setGithubSearchResults([]);
+        return;
       }
-    } catch (error) {
-      console.error('Failed to search GitHub issues:', error);
-      setGithubSearchResults([]);
-    } finally {
-      setIsGithubSearching(false);
-    }
-  }, [projectPath]);
+      setIsGithubSearching(true);
+      try {
+        const result = await api.githubIssuesSearch(projectPath, term.trim(), 20);
+        if (result?.success) {
+          setGithubSearchResults(result.issues ?? []);
+        } else {
+          setGithubSearchResults([]);
+        }
+      } catch (error) {
+        console.error('Failed to search GitHub issues:', error);
+        setGithubSearchResults([]);
+      } finally {
+        setIsGithubSearching(false);
+      }
+    },
+    [projectPath]
+  );
 
   const loadLinearIssues = useCallback(async () => {
     if (!api?.linearInitialFetch) return;
@@ -926,7 +924,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
         <motion.div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
           initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
@@ -951,31 +949,31 @@ const TaskModal: React.FC<TaskModalProps> = ({
               <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/60 bg-muted/30 px-4 py-3">
                 <div className="flex min-w-0 flex-1 items-center gap-2 pr-4">
                   {isEditingHeader ? (
-                    <div className="flex flex-1 flex-col gap-2 animate-in fade-in duration-200">
+                    <div className="flex flex-1 flex-col gap-2 duration-200 animate-in fade-in">
                       <div className="flex items-center gap-2">
-                      <div className="relative flex-1 max-w-[320px]">
-                        <Input
-                          ref={headerInputRef}
-                          value={taskName}
-                          onChange={(e) => onChange(e.target.value)}
-                          onBlur={() => setTouched(true)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              setIsEditingHeader(false);
-                            }
-                          }}
-                          placeholder="Task name"
-                          aria-label="Task name"
-                          aria-invalid={nameHasError}
-                          aria-describedby="task-name-error"
-                          className={`h-8 px-2 py-1 text-sm ${
-                            nameHasError
-                              ? 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive'
-                              : ''
-                          }`}
-                        />
-                      </div>
+                        <div className="relative max-w-[320px] flex-1">
+                          <Input
+                            ref={headerInputRef}
+                            value={taskName}
+                            onChange={(e) => onChange(e.target.value)}
+                            onBlur={() => setTouched(true)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                setIsEditingHeader(false);
+                              }
+                            }}
+                            placeholder="Task name"
+                            aria-label="Task name"
+                            aria-invalid={nameHasError}
+                            aria-describedby="task-name-error"
+                            className={`h-8 px-2 py-1 text-sm ${
+                              nameHasError
+                                ? 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive'
+                                : ''
+                            }`}
+                          />
+                        </div>
                         <Button
                           type="button"
                           variant="ghost"
@@ -995,14 +993,14 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsEditingHeader(true)}
-                      className="flex flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground group"
+                      className="group flex flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                       title="Click to edit Task & Branch"
                     >
                       <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                         <span className="truncate">{displayTaskName}</span>
-                        <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <Pencil className="h-3 w-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                       </span>
-                      <span className="flex items-center gap-1 text-xs font-mono text-muted-foreground">
+                      <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
                         <GitBranch size={10} />
                         <span className="truncate">{displayBranchName}</span>
                       </span>
@@ -1010,7 +1008,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex shrink-0 items-center gap-1">
                   <Button
                     type="button"
                     variant="ghost"
@@ -1039,7 +1037,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                   }}
                   className="flex flex-1 flex-col"
                 >
-                  <div className="flex w-full min-h-[160px] max-h-[400px] flex-col">
+                  <div className="flex max-h-[400px] min-h-[160px] w-full flex-col">
                     <div className="relative flex flex-1 flex-col px-4 pt-4">
                       {attachedIssue ? (
                         <div
@@ -1076,7 +1074,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                         value={initialPrompt}
                         onChange={(e) => setInitialPrompt(e.target.value)}
                         placeholder={promptPlaceholder}
-                        className={`w-full flex-1 min-h-[120px] bg-transparent text-lg text-foreground placeholder:text-muted-foreground focus:outline-none resize-none overflow-y-auto leading-relaxed selection:bg-primary/20 ${
+                        className={`min-h-[120px] w-full flex-1 resize-none overflow-y-auto bg-transparent text-lg leading-relaxed text-foreground selection:bg-primary/20 placeholder:text-muted-foreground focus:outline-none ${
                           !hasInitialPromptSupport ? 'opacity-50' : ''
                         }`}
                         autoFocus
@@ -1092,9 +1090,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     </p>
                   ) : null}
 
-                  <div className="flex items-center justify-between px-4 pb-4 relative">
+                  <div className="relative flex items-center justify-between px-4 pb-4">
                     {/* Fade-out gradient overlay */}
-                    <div className="absolute -top-4 left-0 right-0 h-4 bg-gradient-to-t from-background to-transparent pointer-events-none z-10" />
+                    <div className="pointer-events-none absolute -top-4 left-0 right-0 z-10 h-4 bg-gradient-to-t from-background to-transparent" />
                     {/* Left side buttons */}
                     <div className="flex items-center gap-2">
                       <div className="relative">
@@ -1102,7 +1100,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                           providerRuns={providerRuns}
                           onChange={setProviderRuns}
                           defaultProvider={defaultProviderFromSettings}
-                          className="!h-8 !min-w-[140px] !rounded-md !border !border-border/70 !bg-background/90 !px-3 !text-xs !text-foreground hover:!bg-background backdrop-blur-sm"
+                          className="!h-8 !min-w-[140px] !rounded-md !border !border-border/70 !bg-background/90 !px-3 !text-xs !text-foreground backdrop-blur-sm hover:!bg-background"
                         />
                       </div>
 
@@ -1111,7 +1109,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              className="attachment-menu-button flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground transition-colors hover:bg-background/90 hover:text-foreground backdrop-blur-sm"
+                              className="attachment-menu-button flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-background/90 hover:text-foreground"
                               title="Add context"
                             >
                               <Plus size={16} />
@@ -1120,7 +1118,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                           <PopoverContent
                             align="start"
                             side="bottom"
-                            className="w-48 rounded-lg border-border/70 bg-background/95 p-1 shadow-lg backdrop-blur-sm z-[200]"
+                            className="z-[200] w-48 rounded-lg border-border/70 bg-background/95 p-1 shadow-lg backdrop-blur-sm"
                           >
                             <div className="relative">
                               <button
@@ -1195,8 +1193,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                   <img src={jiraLogo} alt="" className="h-4 w-4" />
                                   Jira tickets
                                 </button>
-
-                                </div>
+                              </div>
                             </div>
                           </PopoverContent>
                         </Popover>
@@ -1224,7 +1221,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                             >
                               <div className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-medium text-foreground">Select GitHub issue</p>
+                                  <p className="text-sm font-medium text-foreground">
+                                    Select GitHub issue
+                                  </p>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -1249,7 +1248,10 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     />
                                   </div>
                                   <Separator />
-                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleGithubScroll}>
+                                  <div
+                                    className="max-h-80 overflow-y-auto py-1"
+                                    onScroll={handleGithubScroll}
+                                  >
                                     {/* Clear option */}
                                     <div
                                       className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
@@ -1269,11 +1271,19 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                         >
                                           <span className="flex min-w-0 items-center gap-2">
                                             <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
-                                              <img src={githubLogo} alt="GitHub" className="h-3.5 w-3.5" />
-                                              <span className="text-[11px] font-medium text-foreground">#{issue.number}</span>
+                                              <img
+                                                src={githubLogo}
+                                                alt="GitHub"
+                                                className="h-3.5 w-3.5"
+                                              />
+                                              <span className="text-[11px] font-medium text-foreground">
+                                                #{issue.number}
+                                              </span>
                                             </span>
                                             {issue.title ? (
-                                              <span className="ml-2 truncate text-muted-foreground">{issue.title}</span>
+                                              <span className="ml-2 truncate text-muted-foreground">
+                                                {issue.title}
+                                              </span>
                                             ) : null}
                                           </span>
                                         </div>
@@ -1308,7 +1318,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    className="h-8 w-full border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
                                     onClick={() => void handleGithubConnect()}
                                     disabled={githubLoading}
                                   >
@@ -1343,7 +1353,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                             >
                               <div className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-medium text-foreground">Select Linear issue</p>
+                                  <p className="text-sm font-medium text-foreground">
+                                    Select Linear issue
+                                  </p>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -1368,7 +1380,10 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     />
                                   </div>
                                   <Separator />
-                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleLinearScroll}>
+                                  <div
+                                    className="max-h-80 overflow-y-auto py-1"
+                                    onScroll={handleLinearScroll}
+                                  >
                                     {/* Clear option */}
                                     <div
                                       className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
@@ -1388,11 +1403,19 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                         >
                                           <span className="flex min-w-0 items-center gap-2">
                                             <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
-                                              <img src={linearLogo} alt="Linear" className="h-3.5 w-3.5" />
-                                              <span className="text-[11px] font-medium text-foreground">{issue.identifier}</span>
+                                              <img
+                                                src={linearLogo}
+                                                alt="Linear"
+                                                className="h-3.5 w-3.5"
+                                              />
+                                              <span className="text-[11px] font-medium text-foreground">
+                                                {issue.identifier}
+                                              </span>
                                             </span>
                                             {issue.title ? (
-                                              <span className="ml-2 truncate text-muted-foreground">{issue.title}</span>
+                                              <span className="ml-2 truncate text-muted-foreground">
+                                                {issue.title}
+                                              </span>
                                             ) : null}
                                           </span>
                                         </div>
@@ -1427,7 +1450,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    className="h-8 w-full border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
                                     onClick={() => setLinearSetupOpen(true)}
                                   >
                                     Connect Linear
@@ -1461,7 +1484,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                             >
                               <div className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-sm font-medium text-foreground">Select Jira ticket</p>
+                                  <p className="text-sm font-medium text-foreground">
+                                    Select Jira ticket
+                                  </p>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -1486,7 +1511,10 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     />
                                   </div>
                                   <Separator />
-                                  <div className="max-h-80 overflow-y-auto py-1" onScroll={handleJiraScroll}>
+                                  <div
+                                    className="max-h-80 overflow-y-auto py-1"
+                                    onScroll={handleJiraScroll}
+                                  >
                                     {/* Clear option */}
                                     <div
                                       className="flex cursor-pointer items-center px-3 py-2 hover:bg-accent"
@@ -1506,11 +1534,19 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                         >
                                           <span className="flex min-w-0 items-center gap-2">
                                             <span className="inline-flex shrink-0 items-center gap-1.5 rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 dark:border-gray-700 dark:bg-gray-800">
-                                              <img src={jiraLogo} alt="Jira" className="h-3.5 w-3.5" />
-                                              <span className="text-[11px] font-medium text-foreground">{issue.key}</span>
+                                              <img
+                                                src={jiraLogo}
+                                                alt="Jira"
+                                                className="h-3.5 w-3.5"
+                                              />
+                                              <span className="text-[11px] font-medium text-foreground">
+                                                {issue.key}
+                                              </span>
                                             </span>
                                             {issue.summary ? (
-                                              <span className="ml-2 truncate text-muted-foreground">{issue.summary}</span>
+                                              <span className="ml-2 truncate text-muted-foreground">
+                                                {issue.summary}
+                                              </span>
                                             ) : null}
                                           </span>
                                         </div>
@@ -1545,7 +1581,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="w-full h-8 border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
+                                    className="h-8 w-full border-border/50 bg-transparent text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground"
                                     onClick={() => setJiraSetupOpen(true)}
                                   >
                                     Connect Jira
@@ -1568,12 +1604,12 @@ const TaskModal: React.FC<TaskModalProps> = ({
                           }
                         }}
                         disabled={!canToggleAutoApprove}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all border ${
+                        className={`flex items-center gap-2 rounded-md border px-3 py-1.5 transition-all ${
                           canToggleAutoApprove
                             ? autoApprove
                               ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20'
-                              : 'border-border/60 bg-background/90 text-muted-foreground hover:text-foreground hover:bg-background/95'
-                            : 'border-border/40 bg-background/90 text-muted-foreground/70 opacity-60 cursor-not-allowed'
+                              : 'border-border/60 bg-background/90 text-muted-foreground hover:bg-background/95 hover:text-foreground'
+                            : 'cursor-not-allowed border-border/40 bg-background/90 text-muted-foreground/70 opacity-60'
                         } backdrop-blur-sm`}
                         title={
                           canToggleAutoApprove
@@ -1592,7 +1628,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                       <Button
                         type="submit"
                         disabled={!!validate(taskName) || isCreating}
-                        className="gap-2 h-8 px-3 text-xs backdrop-blur-sm"
+                        className="h-8 gap-2 px-3 text-xs backdrop-blur-sm"
                       >
                         {isCreating ? (
                           <>
@@ -1671,13 +1707,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                               if (typeof u.token === 'string') setJiraToken(u.token);
                             }}
                             onClose={() => setJiraSetupOpen(false)}
-                            canSubmit={
-                              !!(
-                                jiraSite.trim() &&
-                                jiraEmail.trim() &&
-                                jiraToken.trim()
-                              )
-                            }
+                            canSubmit={!!(jiraSite.trim() && jiraEmail.trim() && jiraToken.trim())}
                             error={jiraConnectionError}
                             onSubmit={() => void handleJiraConnect()}
                           />
@@ -1694,7 +1724,6 @@ const TaskModal: React.FC<TaskModalProps> = ({
     </AnimatePresence>,
     document.body
   );
-
 };
 
 export default TaskModal;
