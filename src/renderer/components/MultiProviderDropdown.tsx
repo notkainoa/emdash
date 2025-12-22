@@ -110,7 +110,7 @@ export const MultiProviderDropdown: React.FC<MultiProviderDropdownProps> = ({
       <PopoverContent
         align="start"
         side="top"
-        className="z-[120] max-h-80 w-64 min-w-[12rem] overflow-y-auto p-1"
+        className="z-[120] max-h-80 min-w-[10rem] max-w-sm w-[var(--radix-popover-trigger-width)] overflow-y-auto p-1"
       >
         <TooltipProvider delayDuration={150}>
           {sortedProviders.map(([key, config]) => {
