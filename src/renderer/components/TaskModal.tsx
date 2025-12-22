@@ -1231,6 +1231,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                       setGithubDropdownOpen(false);
                                     }}
                                     className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                    aria-label="Close GitHub menu"
                                   >
                                     <X size={14} />
                                   </button>
@@ -1363,6 +1364,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                       setLinearDropdownOpen(false);
                                     }}
                                     className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                    aria-label="Close Linear menu"
                                   >
                                     <X size={14} />
                                   </button>
@@ -1494,6 +1496,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                                       setJiraDropdownOpen(false);
                                     }}
                                     className="h-7 w-7 rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                                    aria-label="Close Jira menu"
                                   >
                                     <X size={14} />
                                   </button>
