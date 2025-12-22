@@ -1030,7 +1030,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                 </div>
               </CardHeader>
 
-              <CardContent className="flex flex-1 flex-col p-0">
+              <CardContent className="relative flex flex-1 flex-col p-0">
                 <Separator className="sr-only" />
                 <form
                   onSubmit={(e) => {
@@ -1040,7 +1040,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
                   className="flex flex-1 flex-col"
                 >
                   <div className="flex w-full min-h-[160px] max-h-[400px] flex-col">
-                    <div className="relative flex flex-1 flex-col p-4">
+                    <div className="relative flex flex-1 flex-col px-4 pt-4">
                       {attachedIssue ? (
                         <div
                           key={attachedIssue.key}
@@ -1092,7 +1092,9 @@ const TaskModal: React.FC<TaskModalProps> = ({
                     </p>
                   ) : null}
 
-                  <div className="flex items-center justify-between px-4 pb-4">
+                  <div className="flex items-center justify-between px-4 pb-4 relative">
+                    {/* Fade-out gradient overlay */}
+                    <div className="absolute -top-4 left-0 right-0 h-4 bg-gradient-to-t from-background to-transparent pointer-events-none z-10" />
                     {/* Left side buttons */}
                     <div className="flex items-center gap-2">
                       <div className="relative">
