@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Badge } from './ui/badge';
@@ -210,7 +210,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
     return 'Describe the task or changes you want to make...';
   }, [hasInitialPromptSupport, selectedLinearIssue, selectedGithubIssue, selectedJiraIssue]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!promptRef.current) return;
     promptRef.current.style.height = 'auto';
     promptRef.current.style.height = `${promptRef.current.scrollHeight}px`;
