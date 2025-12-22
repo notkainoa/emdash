@@ -623,12 +623,19 @@ const AcpChatInterface: React.FC<Props> = ({
             : Array.isArray(update.commands)
               ? update.commands
               : [];
+          // Filter out Codex CLI utility commands (undo, compact, init, etc.)
+          const utilityCommands = new Set(['undo', 'compact', 'init', 'reset', 'clear', 'logout']);
           setCommands(
-            cmds.map((cmd: any) => ({
-              name: String(cmd.name || '').replace(/^\//, ''),
-              description: cmd.description || cmd.summary,
-              hint: cmd.input?.hint || cmd.inputHint,
-            }))
+            cmds
+              .filter((cmd: any) => {
+                const name = String(cmd.name || '').toLowerCase().replace(/^\//, '');
+                return !utilityCommands.has(name);
+              })
+              .map((cmd: any) => ({
+                name: String(cmd.name || '').replace(/^\//, ''),
+                description: cmd.description || cmd.summary,
+                hint: cmd.input?.hint || cmd.inputHint,
+              }))
           );
           return;
         }
