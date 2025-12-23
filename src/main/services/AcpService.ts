@@ -946,7 +946,7 @@ class AcpService {
       try {
         record.proc.write(data);
       } catch (err) {
-        log.debug('terminal:write:failed', { terminalId, error: err });
+log.debug('terminal:write:failed', { terminalId, error: err instanceof Error ? err.message : String(err) });
       }
     }
   }
