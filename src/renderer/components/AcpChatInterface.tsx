@@ -484,14 +484,9 @@ const AcpChatInterface: React.FC<Props> = ({
         console.log('[custom-commands] Setting commands:', mappedCommands);
         setCommands(mappedCommands);
       } else {
-        // Always log when no commands found
-        console.log('[custom-commands] No commands found - conditions:', {
-          hasResult: !!result,
-          success: result?.success,
-          hasCommands: !!result?.commands,
-          commandsLength: result?.commands?.length,
-          commands: result?.commands,
-        });
+        // Clear commands when scan fails or returns no results to prevent stale commands
+        console.log('[custom-commands] No commands found - clearing stale commands');
+        setCommands([]);
       }
     };
     loadCustomCommands();
