@@ -373,11 +373,6 @@ const AcpChatInterface: React.FC<Props> = ({
     Array<{ name: string; description?: string; hint?: string }>
   >([]);
 
-  // Debug: Log when commands change
-  useEffect(() => {
-    console.log('[custom-commands] Commands state updated:', commands.length, commands);
-  }, [commands]);
-
   const [plan, setPlan] = useState<Array<{
     content?: string;
     status?: string;
@@ -463,9 +458,7 @@ const AcpChatInterface: React.FC<Props> = ({
   // Scan for custom slash commands when project or provider changes
   useEffect(() => {
     const loadCustomCommands = async () => {
-      console.log('[custom-commands] Scanner useEffect running', { taskPath: task.path, provider });
       if (!task.path || !provider) {
-        console.log('[custom-commands] Early return: missing task.path or provider');
         return;
       }
       uiLog('scanCustomCommands', { projectPath: task.path, provider });
@@ -473,7 +466,6 @@ const AcpChatInterface: React.FC<Props> = ({
         projectPath: task.path,
         providerId: provider,
       });
-      console.log('[custom-commands] Full scan result:', JSON.stringify(result, null, 2));
       uiLog('scanCustomCommands:response', result);
       if (result.success && result.commands && result.commands.length > 0) {
         const mappedCommands = result.commands.map((cmd) => ({
@@ -481,11 +473,9 @@ const AcpChatInterface: React.FC<Props> = ({
           description: cmd.description,
           hint: undefined,
         }));
-        console.log('[custom-commands] Setting commands:', mappedCommands);
         setCommands(mappedCommands);
       } else {
         // Clear commands when scan fails or returns no results to prevent stale commands
-        console.log('[custom-commands] No commands found - clearing stale commands');
         setCommands([]);
       }
     };
@@ -959,16 +949,7 @@ const AcpChatInterface: React.FC<Props> = ({
       return [];
     }
     const query = input.slice(1).toLowerCase();
-    const suggestions = commands
-      .filter((cmd) => cmd.name && cmd.name.toLowerCase().includes(query))
-      .slice(0, 6);
-    console.log('[custom-commands] Command suggestions:', {
-      query,
-      commandsCount: commands.length,
-      suggestionsCount: suggestions.length,
-      suggestions,
-    });
-    return suggestions;
+    return commands.filter((cmd) => cmd.name && cmd.name.toLowerCase().includes(query)).slice(0, 6);
   }, [commands, input]);
 
   const commandHint = useMemo(() => {
