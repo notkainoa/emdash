@@ -83,13 +83,21 @@ export function registerAcpIpc() {
   );
 
   ipcMain.handle('acp:cancel', async (_event, args: { sessionId: string }) => {
-    acpService.cancelSession(args.sessionId);
-    return { success: true };
+    try {
+      await acpService.cancelSession(args.sessionId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle('acp:dispose', async (_event, args: { sessionId: string }) => {
-    acpService.disposeSession(args.sessionId);
-    return { success: true };
+    try {
+      await acpService.disposeSession(args.sessionId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle(
