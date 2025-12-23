@@ -35,7 +35,7 @@ export interface CommandDirectoryConfig {
   provider: ProviderId;
   /** Project-relative directories where commands are stored (scans all) */
   projectDirs: string[];
-  /** Global directories (relative to home dir) where commands are stored (scans all) */
+  /** Global directories (relative to home dir, without ~/ prefix) where commands are stored (scans all) */
   globalDirs: string[];
   /** File extension for command files */
   extension: string;
@@ -48,34 +48,24 @@ export const COMMAND_DIRECTORIES: Partial<Record<ProviderId, CommandDirectoryCon
   codex: {
     provider: 'codex',
     projectDirs: ['.codex/prompts', '.codex/commands'],
-    globalDirs: ['~/.codex/prompts', '~/.codex/commands'],
+    globalDirs: ['.codex/prompts', '.codex/commands'],
     extension: '.md',
   },
   claude: {
     provider: 'claude',
     projectDirs: ['.claude/commands'],
-    globalDirs: ['~/.claude/commands'],
+    globalDirs: ['.claude/commands'],
     extension: '.md',
   },
   gemini: {
     provider: 'gemini',
     projectDirs: ['.gemini/commands'],
-    globalDirs: ['~/.gemini/commands'],
+    globalDirs: ['.gemini/commands'],
     extension: '.toml',
   },
   // Note: Other providers (cursor, etc.) can be added here when their
   // custom command directories are known
 };
-
-/**
- * Expand ~ to home directory
- */
-function expandHome(filePath: string): string {
-  if (filePath.startsWith('~/')) {
-    return path.join(os.homedir(), filePath.slice(2));
-  }
-  return filePath;
-}
 
 /**
  * Read directory and return files matching the extension
@@ -213,7 +203,7 @@ export async function scanCustomCommands(
 
   // Scan all global directories
   for (const globalDir of config.globalDirs) {
-    const globalDirPath = expandHome(globalDir);
+    const globalDirPath = path.join(os.homedir(), globalDir);
     console.log('[custom-commands scan] Scanning global directory:', globalDirPath);
     const globalCommands = await scanCommandsDirectory(
       globalDirPath,
