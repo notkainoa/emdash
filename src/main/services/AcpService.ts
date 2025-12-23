@@ -283,7 +283,6 @@ class AcpService {
       if (text.trim()) {
         state.lastStderr = `${state.lastStderr}${text}`.slice(-8000);
         log.warn('acp:stderr', { taskId, providerId, text: text.trim().slice(0, 2000) });
-        log.warn('acp:stderr', { taskId, providerId, text: text.trim().slice(0, 1000) });
       }
     });
     proc.on('error', (error) => {
