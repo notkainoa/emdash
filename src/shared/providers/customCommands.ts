@@ -109,8 +109,11 @@ function extractDescription(content: string, extension: string): string | undefi
       if (typeof parsed.description === 'string') {
         return parsed.description;
       }
-    } catch {
-      // If TOML parsing fails, fall through to generic text handling
+    } catch (error: unknown) {
+      // If TOML parsing fails, log the error and fall through to generic text handling
+      console.error(
+        `Failed to parse TOML file: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
     // Fall through to text-based extraction if TOML parsing fails or no description found
   }
@@ -164,8 +167,11 @@ async function scanCommandsDirectory(
         provider,
         filePath,
       });
-    } catch {
-      // Skip files we can't read
+    } catch (error: unknown) {
+      // Skip files we can't read, but log for debugging
+      console.error(
+        `Failed to read command file ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
