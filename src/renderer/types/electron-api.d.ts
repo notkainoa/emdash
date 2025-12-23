@@ -201,6 +201,18 @@ declare global {
         success: boolean;
         error?: string;
       }>;
+      acpSetModel: (args: { sessionId: string; modelId: string }) => Promise<{
+        success: boolean;
+        error?: string;
+      }>;
+      acpSetConfigOption: (args: {
+        sessionId: string;
+        configId: string;
+        value: unknown;
+      }) => Promise<{
+        success: boolean;
+        error?: string;
+      }>;
       onAcpEvent: (listener: (payload: any) => void) => () => void;
       scanCustomCommands: (args: { projectPath: string; providerId: string }) => Promise<{
         success: boolean;

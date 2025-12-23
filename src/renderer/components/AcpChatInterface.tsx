@@ -3,10 +3,12 @@ import {
   AlertTriangle,
   ArrowUp,
   Brain,
+  Check,
   ChevronDown,
   ChevronRight,
   Circle,
   Clipboard,
+  Copy,
   FileText,
   Paperclip,
   Pencil,
@@ -35,6 +37,21 @@ const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
     <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
   </svg>
 );
+import { Task } from '../types/chat';
+import { type Provider } from '../types';
+import InstallBanner from './InstallBanner';
+import { Button } from './ui/button';
+import { Spinner } from './ui/spinner';
+import { getInstallCommandForProvider } from '@shared/providers/registry';
+import { extractCurrentModelId, extractModelsFromPayload } from '@shared/acpUtils';
+import type { AcpConfigOption, AcpModel } from '@shared/types/acp';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 
 type ContentBlock = {
   type: string;
@@ -91,6 +108,7 @@ type FeedItem =
       blocks: ContentBlock[];
       streaming?: boolean;
       messageKind?: 'thought' | 'system';
+      runDurationMs?: number;
     }
   | { id: string; type: 'tool'; toolCallId: string }
   | {
@@ -143,6 +161,22 @@ const truncateText = (text: string, limit: number = DEFAULT_TRUNCATE_LIMIT) => {
 
 const pluralize = (value: number, noun: string) =>
   value === 1 ? `${value} ${noun}` : `${value} ${noun}s`;
+
+const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ').trim();
+
+const formatDuration = (ms: number) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const LoadingTimer: React.FC<{ label: string }> = ({ label }) => (
+  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <Spinner size="sm" className="text-muted-foreground/70" aria-hidden="true" />
+    <span className="tabular-nums">{label}</span>
+  </div>
+);
 
 const commonPrefixLength = (a: string[], b: string[]) => {
   const max = Math.min(a.length, b.length);
@@ -366,6 +400,361 @@ const statusStyles: Record<string, string> = {
   cancelled: 'text-gray-600 bg-gray-100 border-gray-200',
 };
 
+type AcpConfigOption = {
+  id?: string;
+  name?: string;
+  label?: string;
+  description?: string;
+  type?: string;
+  value?: unknown;
+  currentValue?: unknown;
+  current_value?: unknown;
+  selectedValue?: unknown;
+  options?: any[];
+  possibleValues?: any[];
+  values?: any[];
+  allowedValues?: any[];
+};
+
+type ConfigChoice = {
+  value: unknown;
+  label?: string;
+  name?: string;
+  description?: string;
+};
+
+type AcpModel = {
+  id?: string;
+  name?: string;
+  label?: string;
+  displayName?: string;
+  title?: string;
+  description?: string;
+  model?: string;
+};
+
+type ModelOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+type ModelVariant = ModelOption & {
+  baseId: string;
+  effort?: string | null;
+};
+
+type ThinkingBudgetLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+const EFFORT_ORDER: ThinkingBudgetLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+const EFFORT_LABELS: Record<ThinkingBudgetLevel, string> = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+};
+
+const flattenConfigChoices = (choices: any[]): any[] => {
+  const flat: any[] = [];
+  for (const choice of choices) {
+    if (choice && Array.isArray(choice.options)) {
+      flat.push(...choice.options);
+    } else {
+      flat.push(choice);
+    }
+  }
+  return flat;
+};
+
+const normalizeConfigChoice = (choice: any): ConfigChoice | null => {
+  if (choice === null || choice === undefined) return null;
+  if (typeof choice === 'string' || typeof choice === 'number' || typeof choice === 'boolean') {
+    return { value: choice, label: String(choice) };
+  }
+  if (typeof choice === 'object') {
+    const value =
+      choice.value ??
+      choice.id ??
+      choice.key ??
+      choice.name ??
+      choice.label ??
+      choice.option;
+    return {
+      value,
+      label: choice.label ?? choice.name ?? (value !== undefined ? String(value) : undefined),
+      name: choice.name,
+      description: choice.description,
+    };
+  }
+  return null;
+};
+
+const extractConfigChoices = (option?: AcpConfigOption | null): ConfigChoice[] => {
+  if (!option) return [];
+  const raw =
+    (Array.isArray(option.options) && option.options) ||
+    (Array.isArray(option.possibleValues) && option.possibleValues) ||
+    (Array.isArray(option.values) && option.values) ||
+    (Array.isArray(option.allowedValues) && option.allowedValues) ||
+    [];
+  const flat = flattenConfigChoices(raw);
+  return flat.map(normalizeConfigChoice).filter(Boolean) as ConfigChoice[];
+};
+
+const getConfigOptionId = (option?: AcpConfigOption | null): string | null => {
+  if (!option) return null;
+  const id =
+    option.id ??
+    (option as any).configId ??
+    (option as any).config_id ??
+    (option as any).key ??
+    option.name;
+  return id ? String(id) : null;
+};
+
+const getConfigOptionValue = (option?: AcpConfigOption | null): unknown => {
+  if (!option) return null;
+  return (
+    option.currentValue ??
+    option.current_value ??
+    option.value ??
+    option.selectedValue ??
+    (option as any).selected ??
+    null
+  );
+};
+
+const normalizeBudgetText = (value: unknown) => String(value ?? '').toLowerCase();
+
+const normalizeEffort = (raw: unknown): string | null => {
+  if (raw === null || raw === undefined) return null;
+  const cleaned = String(raw).toLowerCase().replace(/\s+/g, '').replace(/[_-]/g, '');
+  if (!cleaned) return null;
+  if (['xhigh', 'extrahigh', 'xtra', 'xtrahigh'].includes(cleaned)) return 'xhigh';
+  if (['high'].includes(cleaned)) return 'high';
+  if (['medium', 'med'].includes(cleaned)) return 'medium';
+  if (['low'].includes(cleaned)) return 'low';
+  if (['minimal', 'min', 'none', 'off', 'disabled'].includes(cleaned)) return 'minimal';
+  return null;
+};
+
+const parseEffortFromLabel = (label?: string | null): string | null => {
+  if (!label) return null;
+  const match = label.match(/\(([^)]+)\)\s*$/);
+  if (!match) return null;
+  return normalizeEffort(match[1]);
+};
+
+const stripEffortSuffix = (label?: string | null): string | null => {
+  if (!label) return null;
+  const effort = parseEffortFromLabel(label);
+  if (!effort) return label;
+  return label.replace(/\s*\([^)]+\)\s*$/, '').trim();
+};
+
+const formatModelLabel = (label: string): string => {
+  const parts = label.split(/[-\s]+/).filter(Boolean);
+  if (!parts.length) return label;
+  const formatted = parts.map((part) => {
+    const lower = part.toLowerCase();
+    if (lower === 'gpt') return 'GPT';
+    if (lower === 'codex') return 'Codex';
+    if (lower === 'mini') return 'Mini';
+    if (lower === 'max') return 'Max';
+    if (/^\d+(\.\d+)?$/.test(part)) return part;
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  });
+  return formatted.join('-');
+};
+
+const splitModelId = (modelId?: string | null, label?: string | null) => {
+  if (!modelId) {
+    return {
+      baseId: '',
+      effort: parseEffortFromLabel(label),
+    };
+  }
+  if (modelId.includes('/')) {
+    const parts = modelId.split('/');
+    const tail = parts[parts.length - 1];
+    const effort = normalizeEffort(tail);
+    if (effort) {
+      return {
+        baseId: parts.slice(0, -1).join('/'),
+        effort,
+      };
+    }
+  }
+  return {
+    baseId: modelId,
+    effort: parseEffortFromLabel(label),
+  };
+};
+
+const detectBudgetLevel = (text: string): ThinkingBudgetLevel | null => {
+  if (/\bminimal\b/.test(text) || /\b(none|off|disabled|disable|zero)\b/.test(text)) return 'minimal';
+  if (/\blow\b/.test(text) || text === '1') return 'low';
+  if (/\bmedium\b/.test(text) || text === '2') return 'medium';
+  if (/\bhigh\b/.test(text) || text === '3') return 'high';
+  if (/\b(xhigh|extra\s*high)\b/.test(text) || text === '4') return 'xhigh';
+  return null;
+};
+
+const budgetFromEffort = (effort?: string | null): ThinkingBudgetLevel | null => {
+  const normalized = normalizeEffort(effort);
+  if (!normalized) return null;
+  if (
+    normalized === 'minimal' ||
+    normalized === 'low' ||
+    normalized === 'medium' ||
+    normalized === 'high' ||
+    normalized === 'xhigh'
+  ) {
+    return normalized;
+  }
+  return null;
+};
+
+const chooseEffortForBudget = (
+  budget: ThinkingBudgetLevel,
+  available: Set<string>
+): ThinkingBudgetLevel | null => {
+  const normalizedAvailable = new Set(
+    Array.from(available)
+      .map((entry) => normalizeEffort(entry))
+      .filter(Boolean) as ThinkingBudgetLevel[]
+  );
+  if (normalizedAvailable.has(budget)) return budget;
+  const idx = EFFORT_ORDER.indexOf(budget);
+  for (let i = idx; i >= 0; i -= 1) {
+    const level = EFFORT_ORDER[i];
+    if (normalizedAvailable.has(level)) return level;
+  }
+  for (let i = idx + 1; i < EFFORT_ORDER.length; i += 1) {
+    const level = EFFORT_ORDER[i];
+    if (normalizedAvailable.has(level)) return level;
+  }
+  return null;
+};
+
+const buildBudgetMapping = (option?: AcpConfigOption | null) => {
+  const choices = extractConfigChoices(option);
+  const budgetToChoice = new Map<ThinkingBudgetLevel, ConfigChoice>();
+  const valueToBudget = new Map<string, ThinkingBudgetLevel>();
+  const availableLevels = new Set<ThinkingBudgetLevel>();
+  for (const choice of choices) {
+    const label = normalizeBudgetText(
+      [choice.label, choice.name, choice.value, choice.description].filter(Boolean).join(' ')
+    );
+    const level = detectBudgetLevel(label);
+    if (level && !budgetToChoice.has(level)) {
+      budgetToChoice.set(level, choice);
+    }
+    if (level && choice.value !== undefined) {
+      valueToBudget.set(String(choice.value), level);
+    }
+    if (level) {
+      availableLevels.add(level);
+    }
+  }
+  return { choices, budgetToChoice, valueToBudget, availableLevels };
+};
+
+const getBudgetFromConfig = (option?: AcpConfigOption | null): ThinkingBudgetLevel | null => {
+  if (!option) return null;
+  const currentValue = getConfigOptionValue(option);
+  if (currentValue === null || currentValue === undefined) return null;
+  const { valueToBudget } = buildBudgetMapping(option);
+  const direct = valueToBudget.get(String(currentValue));
+  if (direct) return direct;
+  const inferred = detectBudgetLevel(normalizeBudgetText(currentValue));
+  return inferred;
+};
+
+const findThinkingConfigOption = (options: AcpConfigOption[]): AcpConfigOption | null => {
+  let best: { option: AcpConfigOption; score: number } | null = null;
+  for (const option of options) {
+    const haystack = normalizeBudgetText(
+      [option.id, option.name, option.label, option.description].filter(Boolean).join(' ')
+    );
+    if (!/(reason|thinking|effort|budget)/.test(haystack)) continue;
+    const { choices } = buildBudgetMapping(option);
+    const hasChoices = choices.length > 0;
+    const hasKnownLevels = choices.some((choice) =>
+      Boolean(detectBudgetLevel(normalizeBudgetText(choice.label ?? choice.name ?? choice.value)))
+    );
+    let score = 0;
+    if (option.type === 'select' || option.type === 'enum') score += 2;
+    if (hasChoices) score += 2;
+    if (hasKnownLevels) score += 2;
+    if (/(reason|thinking)/.test(haystack)) score += 1;
+    if (!best || score > best.score) best = { option, score };
+  }
+  return best?.option ?? null;
+};
+
+const findModelConfigOption = (options: AcpConfigOption[]): AcpConfigOption | null => {
+  let best: { option: AcpConfigOption; score: number } | null = null;
+  for (const option of options) {
+    const haystack = normalizeBudgetText(
+      [option.id, option.name, option.label, option.description].filter(Boolean).join(' ')
+    );
+    if (!/model/.test(haystack)) continue;
+    if (/(reason|thinking|effort|budget)/.test(haystack)) continue;
+    const choices = extractConfigChoices(option);
+    const hasChoices = choices.length > 0;
+    let score = 0;
+    if (option.type === 'select' || option.type === 'enum') score += 2;
+    if (hasChoices) score += 2;
+    if (/(model)/.test(haystack)) score += 1;
+    if (!best || score > best.score) best = { option, score };
+  }
+  return best?.option ?? null;
+};
+
+const normalizeModelOption = (model: any): ModelOption | null => {
+  if (!model) return null;
+  if (typeof model === 'string') {
+    return { id: model, label: model };
+  }
+  if (typeof model === 'object') {
+    const id =
+      model.id ??
+      model.modelId ??
+      model.model_id ??
+      model.model ??
+      model.name ??
+      model.value ??
+      model.slug ??
+      model.key;
+    if (!id) return null;
+    const label =
+      model.displayName ??
+      model.label ??
+      model.title ??
+      model.name ??
+      model.modelId ??
+      String(id);
+    return {
+      id: String(id),
+      label: String(label),
+      description: model.description ? String(model.description) : undefined,
+    };
+  }
+  return null;
+};
+
+const nextBudgetLevel = (
+  current: ThinkingBudgetLevel,
+  levels: ThinkingBudgetLevel[]
+): ThinkingBudgetLevel => {
+  if (!levels.length) return current;
+  const idx = levels.indexOf(current);
+  const next = levels[(idx + 1) % levels.length];
+  return next ?? levels[0] ?? current;
+};
+
 const AcpChatInterface: React.FC<Props> = ({
   task,
   projectName: _projectName,
@@ -405,7 +794,16 @@ const AcpChatInterface: React.FC<Props> = ({
   }>({});
   const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
   const [planModeEnabled, setPlanModeEnabled] = useState(false);
+  const [thinkingBudget, setThinkingBudget] = useState<ThinkingBudgetLevel>('medium');
+  const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
+  const [models, setModels] = useState<AcpModel[]>([]);
+  const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [runElapsedMs, setRunElapsedMs] = useState(0);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const runStartedAtRef = useRef<number | null>(null);
+  const lastAssistantMessageIdRef = useRef<string | null>(null);
+  const copyResetRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -416,6 +814,23 @@ const AcpChatInterface: React.FC<Props> = ({
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedItems((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const handleConfigAndModelUpdates = useCallback((payload: any) => {
+    if (!payload) return;
+    if (Array.isArray(payload.configOptions)) {
+      setConfigOptions(payload.configOptions);
+    } else if (Array.isArray(payload.config_options)) {
+      setConfigOptions(payload.config_options);
+    }
+    const nextModels = extractModelsFromPayload(payload);
+    if (nextModels.length) {
+      setModels(nextModels);
+    }
+    const nextCurrentModelId = extractCurrentModelId(payload);
+    if (nextCurrentModelId) {
+      setCurrentModelId(nextCurrentModelId);
+    }
   }, []);
 
   // Auto-resize textarea based on content
@@ -434,6 +849,24 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [feed.length, scrollToBottom]);
 
   useEffect(() => {
+    return () => {
+      if (copyResetRef.current !== null) {
+        window.clearTimeout(copyResetRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning || runStartedAtRef.current === null) return;
+    setRunElapsedMs(Date.now() - runStartedAtRef.current);
+    const interval = window.setInterval(() => {
+      if (runStartedAtRef.current === null) return;
+      setRunElapsedMs(Date.now() - runStartedAtRef.current);
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [isRunning]);
+
+  useEffect(() => {
     setAgentId(String(provider || 'codex'));
   }, [provider]);
 
@@ -441,6 +874,9 @@ const AcpChatInterface: React.FC<Props> = ({
     let cancelled = false;
     (async () => {
       setSessionError(null);
+      setConfigOptions([]);
+      setModels([]);
+      setCurrentModelId(null);
       uiLog('startSession', { taskId: task.id, provider, cwd: task.path });
       const res = await window.electronAPI.acpStartSession({
         taskId: task.id,
@@ -513,17 +949,29 @@ const AcpChatInterface: React.FC<Props> = ({
         if (caps) {
           setPromptCaps(normalizePromptCaps(caps));
         }
+        handleConfigAndModelUpdates(payload);
+        uiLog('session_started:config', {
+          configOptions: Array.isArray(payload.configOptions)
+            ? payload.configOptions.length
+            : Array.isArray(payload.config_options)
+              ? payload.config_options.length
+              : 0,
+          models: extractModelsFromPayload(payload).length,
+          currentModelId: extractCurrentModelId(payload),
+        });
         return;
       }
       if (payload.type === 'session_error') {
         uiLog('session_error', payload.error);
         setSessionError(payload.error || 'ACP session error');
         setIsRunning(false);
+        runStartedAtRef.current = null;
         return;
       }
       if (payload.type === 'session_exit') {
         uiLog('session_exit', payload);
         setIsRunning(false);
+        runStartedAtRef.current = null;
         if (!sessionError) {
           setSessionError('ACP session ended.');
         }
@@ -531,12 +979,32 @@ const AcpChatInterface: React.FC<Props> = ({
       }
       if (payload.type === 'prompt_end') {
         uiLog('prompt_end', payload);
+        const durationMs =
+          runStartedAtRef.current !== null ? Date.now() - runStartedAtRef.current : runElapsedMs;
         setIsRunning(false);
-        setFeed((prev) =>
-          prev.map((item) =>
-            item.type === 'message' && item.streaming ? { ...item, streaming: false } : item
-          )
-        );
+        runStartedAtRef.current = null;
+        setRunElapsedMs(durationMs);
+        setFeed((prev) => {
+          const lastAssistantId = lastAssistantMessageIdRef.current;
+          const next = prev.map((item) => {
+            return item.type === 'message' && item.streaming
+              ? { ...item, streaming: false }
+              : item;
+          });
+          if (lastAssistantId && Number.isFinite(durationMs)) {
+            const targetIndex = next.findIndex(
+              (item) => item.type === 'message' && item.id === lastAssistantId
+            );
+            if (targetIndex >= 0) {
+              const target = next[targetIndex];
+              if (target.type === 'message') {
+                next[targetIndex] = { ...target, runDurationMs: durationMs };
+              }
+            }
+          }
+          return next;
+        });
+        lastAssistantMessageIdRef.current = null;
         if (payload.stopReason) {
           const stopReason = String(payload.stopReason).trim();
           if (stopReason && stopReason !== 'end_turn') {
@@ -580,6 +1048,10 @@ const AcpChatInterface: React.FC<Props> = ({
           (update.sessionUpdate as string) || (update.type as string) || (update.kind as string);
         if (!updateType) return;
         uiLog('session_update', { updateType, update });
+        handleConfigAndModelUpdates(update);
+        if (updateType === 'config_option_update' || updateType === 'config_options_update' || updateType === 'model_update') {
+          return;
+        }
         if (
           updateType === 'agent_message_chunk' ||
           updateType === 'user_message_chunk' ||
@@ -754,6 +1226,20 @@ const AcpChatInterface: React.FC<Props> = ({
     return resourceBlock?.resource?.text || '';
   };
 
+  const buildCopyText = (blocks: ContentBlock[]) => {
+    const parts: string[] = [];
+    blocks.forEach((block) => {
+      if (block.type === 'text' && block.text) {
+        parts.push(block.text);
+        return;
+      }
+      if (block.type === 'resource' && block.resource?.text) {
+        parts.push(block.resource.text);
+      }
+    });
+    return parts.join('\n\n').trim();
+  };
+
   const appendMessage = (
     role: 'user' | 'assistant' | 'system',
     blocks: ContentBlock[],
@@ -774,18 +1260,25 @@ const AcpChatInterface: React.FC<Props> = ({
         const merged = mergeBlocks(last.blocks, blocks);
         const next = [...prev];
         next[next.length - 1] = { ...last, blocks: merged };
+        if (role === 'assistant' && messageKind !== 'thought') {
+          lastAssistantMessageIdRef.current = last.id;
+        }
         return next;
+      }
+      const newItem = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'message' as const,
+        role,
+        blocks,
+        streaming,
+        messageKind,
+      };
+      if (role === 'assistant' && messageKind !== 'thought') {
+        lastAssistantMessageIdRef.current = newItem.id;
       }
       return [
         ...prev,
-        {
-          id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          type: 'message',
-          role,
-          blocks,
-          streaming,
-          messageKind,
-        },
+        newItem,
       ];
     });
   };
@@ -798,6 +1291,9 @@ const AcpChatInterface: React.FC<Props> = ({
     const promptBlocks = buildPromptBlocks(trimmed);
     appendMessage('user', promptBlocks);
     setAttachments([]);
+    runStartedAtRef.current = Date.now();
+    lastAssistantMessageIdRef.current = null;
+    setRunElapsedMs(0);
     setIsRunning(true);
     uiLog('sendPrompt', { sessionId, blocks: promptBlocks });
     const res = await window.electronAPI.acpSendPrompt({
@@ -808,6 +1304,8 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!res?.success) {
       setSessionError(res?.error || 'Failed to send prompt.');
       setIsRunning(false);
+      runStartedAtRef.current = null;
+      setRunElapsedMs(0);
     }
   };
 
@@ -816,6 +1314,7 @@ const AcpChatInterface: React.FC<Props> = ({
     uiLog('cancelSession', { sessionId });
     await window.electronAPI.acpCancel({ sessionId });
     setIsRunning(false);
+    runStartedAtRef.current = null;
     setToolCalls((prev) => {
       const next: Record<string, ToolCall> = {};
       for (const [id, call] of Object.entries(prev)) {
@@ -979,7 +1478,311 @@ const AcpChatInterface: React.FC<Props> = ({
     return match?.hint || null;
   }, [commands, input]);
 
+  const runTimerLabel = useMemo(() => formatDuration(runElapsedMs), [runElapsedMs]);
+
+  const latestToolCallId = useMemo(() => {
+    for (let i = feed.length - 1; i >= 0; i -= 1) {
+      const item = feed[i];
+      if (item.type === 'tool') return item.toolCallId;
+    }
+    return null;
+  }, [feed]);
+
+  const showInlineToolLoading = isRunning && Boolean(latestToolCallId);
+  const showBottomLoading = isRunning && !latestToolCallId;
+
   const canSend = input.trim().length > 0 || attachments.length > 0;
+  const modelConfigOption = useMemo(
+    () => findModelConfigOption(configOptions),
+    [configOptions]
+  );
+  const modelConfigId = useMemo(
+    () => getConfigOptionId(modelConfigOption),
+    [modelConfigOption]
+  );
+  const modelConfigChoices = useMemo(
+    () => extractConfigChoices(modelConfigOption),
+    [modelConfigOption]
+  );
+  const configModelValue = useMemo(
+    () => getConfigOptionValue(modelConfigOption),
+    [modelConfigOption]
+  );
+  const configModelId =
+    configModelValue !== null && configModelValue !== undefined
+      ? String(configModelValue)
+      : null;
+  const rawModelVariants = useMemo<ModelOption[]>(() => {
+    if (modelConfigChoices.length) {
+      return modelConfigChoices
+        .map((choice) => {
+          if (choice.value === undefined || choice.value === null) return null;
+          return {
+            id: String(choice.value),
+            label: choice.label ?? choice.name ?? String(choice.value),
+            description: choice.description,
+          };
+        })
+        .filter(Boolean) as ModelOption[];
+    }
+    return models.map(normalizeModelOption).filter(Boolean) as ModelOption[];
+  }, [modelConfigChoices, models]);
+
+  const modelCatalog = useMemo(() => {
+    const map = new Map<
+      string,
+      { baseId: string; label: string; description?: string; variants: ModelVariant[]; efforts: Set<string> }
+    >();
+    for (const variant of rawModelVariants) {
+      const parts = splitModelId(variant.id, variant.label);
+      const baseId = parts.baseId || variant.id;
+      const baseLabel = stripEffortSuffix(variant.label) ?? baseId;
+      const formattedLabel = formatModelLabel(baseLabel);
+      const entry =
+        map.get(baseId) ?? {
+          baseId,
+          label: formattedLabel,
+          description: variant.description,
+          variants: [],
+          efforts: new Set<string>(),
+        };
+      entry.variants.push({ ...variant, baseId, effort: parts.effort });
+      if (parts.effort) entry.efforts.add(parts.effort);
+      if (!entry.label && formattedLabel) entry.label = formattedLabel;
+      map.set(baseId, entry);
+    }
+    return map;
+  }, [rawModelVariants]);
+
+  const modelOptions = useMemo<ModelOption[]>(() => {
+    return Array.from(modelCatalog.values()).map((entry) => ({
+      id: entry.baseId,
+      label: entry.label,
+      description: entry.description,
+    }));
+  }, [modelCatalog]);
+
+  const rawSelectedModelId =
+    configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
+  const selectedModelParts = splitModelId(rawSelectedModelId, null);
+  const selectedBaseId =
+    (selectedModelParts.baseId && modelCatalog.has(selectedModelParts.baseId)
+      ? selectedModelParts.baseId
+      : modelOptions[0]?.id) ?? '';
+  const selectedModelEntry = selectedBaseId ? modelCatalog.get(selectedBaseId) : undefined;
+  const currentEffort = selectedModelParts.effort;
+  const fallbackModelId = selectedBaseId || modelId;
+  const resolvedModelValue = modelOptions.some((option) => option.id === fallbackModelId)
+    ? fallbackModelId
+    : undefined;
+  const canSetModel = Boolean(sessionId) && (Boolean(modelConfigId) || modelOptions.length > 0);
+  const thinkingConfigOption = useMemo(
+    () => findThinkingConfigOption(configOptions),
+    [configOptions]
+  );
+  const thinkingConfigId = useMemo(
+    () => getConfigOptionId(thinkingConfigOption),
+    [thinkingConfigOption]
+  );
+  const thinkingConfigMapping = useMemo(
+    () => buildBudgetMapping(thinkingConfigOption),
+    [thinkingConfigOption]
+  );
+  const configDrivenBudget = useMemo(
+    () => getBudgetFromConfig(thinkingConfigOption),
+    [thinkingConfigOption]
+  );
+  const modelDrivenBudget = useMemo(
+    () => budgetFromEffort(currentEffort),
+    [currentEffort]
+  );
+  const fallbackThinkingConfigId = provider === 'codex' ? 'model_reasoning_effort' : null;
+  const availableBudgetLevels = useMemo(() => {
+    if (thinkingConfigMapping.availableLevels.size) {
+      return EFFORT_ORDER.filter((level) => thinkingConfigMapping.availableLevels.has(level));
+    }
+    if (selectedModelEntry?.efforts?.size) {
+      const normalized = new Set(
+        Array.from(selectedModelEntry.efforts)
+          .map((entry) => normalizeEffort(entry))
+          .filter(Boolean) as ThinkingBudgetLevel[]
+      );
+      return EFFORT_ORDER.filter((level) => normalized.has(level));
+    }
+    return ['low', 'medium', 'high'] as ThinkingBudgetLevel[];
+  }, [selectedModelEntry?.efforts, thinkingConfigMapping.availableLevels]);
+  const resolvedBudget: ThinkingBudgetLevel =
+    configDrivenBudget ?? modelDrivenBudget ?? thinkingBudget ?? availableBudgetLevels[0] ?? 'medium';
+  const activeBudgetLevel = availableBudgetLevels.includes(resolvedBudget)
+    ? resolvedBudget
+    : availableBudgetLevels[0] ?? 'medium';
+  const activeBudgetLabel = EFFORT_LABELS[activeBudgetLevel];
+  const activeBudgetIndex = Math.max(0, availableBudgetLevels.indexOf(activeBudgetLevel));
+  const dotCount = Math.max(1, availableBudgetLevels.length);
+  const dotSize = dotCount >= 4 ? 3 : 4;
+  const dotGap = dotCount >= 4 ? 2 : 3;
+  const canSetThinkingBudget =
+    Boolean(sessionId) &&
+    (Boolean(thinkingConfigId) || Boolean(selectedModelEntry?.variants.length) || Boolean(fallbackThinkingConfigId));
+
+  const handleModelChange = useCallback(
+    (value: string) => {
+      setModelId(value);
+      if (!sessionId || !canSetModel) return;
+
+      const entry = modelCatalog.get(value);
+      const availableEfforts = entry?.efforts ?? new Set<string>();
+      const preferredEffort =
+        (activeBudgetLevel && chooseEffortForBudget(activeBudgetLevel, availableEfforts)) ||
+        currentEffort;
+      const targetVariant =
+        entry?.variants.find((variant) => variant.effort === preferredEffort) ??
+        entry?.variants[0];
+      const targetModelId = targetVariant?.id ?? value;
+
+      if (modelConfigId) {
+        const choice = modelConfigChoices.find((item) => String(item.value) === targetModelId);
+        const targetValue = choice?.value ?? targetModelId;
+        setConfigOptions((prev) =>
+          prev.map((option) =>
+            getConfigOptionId(option) === modelConfigId
+              ? { ...option, value: targetValue, currentValue: targetValue }
+              : option
+          )
+        );
+        void window.electronAPI.acpSetConfigOption?.({
+          sessionId,
+          configId: modelConfigId,
+          value: targetValue,
+        }).then((res) => {
+          if (!res?.success) {
+            uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
+          }
+        });
+        return;
+      }
+
+      setCurrentModelId(targetModelId);
+      void window.electronAPI.acpSetModel?.({
+        sessionId,
+        modelId: targetModelId,
+      }).then((res) => {
+        if (!res?.success) {
+          uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
+        }
+      });
+    },
+    [
+      activeBudgetLevel,
+      canSetModel,
+      currentEffort,
+      modelCatalog,
+      modelConfigChoices,
+      modelConfigId,
+      sessionId,
+      uiLog,
+    ]
+  );
+
+  const handleThinkingBudgetClick = useCallback(() => {
+    const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
+    setThinkingBudget(next);
+
+    if (!canSetThinkingBudget) return;
+    if (thinkingConfigId) {
+      const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
+      const targetValue = targetChoice?.value ?? next;
+      if (targetValue === undefined) {
+        uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
+        return;
+      }
+      if (targetChoice) {
+        setConfigOptions((prev) =>
+          prev.map((option) =>
+            getConfigOptionId(option) === thinkingConfigId
+              ? { ...option, value: targetChoice.value, currentValue: targetChoice.value }
+              : option
+          )
+        );
+      }
+      void window.electronAPI.acpSetConfigOption?.({
+        sessionId,
+        configId: thinkingConfigId,
+        value: targetValue,
+      }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
+        }
+      });
+      return;
+    }
+
+    if (selectedModelEntry && selectedModelEntry.variants.length) {
+      const desiredEffort = chooseEffortForBudget(next, selectedModelEntry.efforts);
+      const targetVariant =
+        selectedModelEntry.variants.find((variant) => variant.effort === desiredEffort) ??
+        selectedModelEntry.variants[0];
+      if (!targetVariant) return;
+      setCurrentModelId(targetVariant.id);
+      void window.electronAPI.acpSetModel?.({
+        sessionId,
+        modelId: targetVariant.id,
+      }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
+        }
+      });
+      return;
+    }
+
+    const configId = fallbackThinkingConfigId;
+    if (!configId) return;
+    const targetValue = next;
+    void window.electronAPI.acpSetConfigOption?.({
+      sessionId,
+      configId,
+      value: targetValue,
+    }).then((res) => {
+      if (!res?.success) {
+        uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
+      }
+    });
+  }, [
+    activeBudgetLevel,
+    canSetThinkingBudget,
+    fallbackThinkingConfigId,
+    availableBudgetLevels,
+    sessionId,
+    thinkingConfigId,
+    thinkingConfigMapping.budgetToChoice,
+    selectedModelEntry,
+    uiLog,
+  ]);
+
+  const handleCopyMessage = useCallback(
+    async (messageId: string, text: string) => {
+      if (!text) return;
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+        console.error('Clipboard API not available in this environment');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopiedMessageId(messageId);
+        if (copyResetRef.current !== null) {
+          window.clearTimeout(copyResetRef.current);
+        }
+        copyResetRef.current = window.setTimeout(() => {
+          setCopiedMessageId(null);
+          copyResetRef.current = null;
+        }, 2000);
+      } catch (error) {
+        console.error('Failed to copy message', error);
+        setCopiedMessageId(null);
+      }
+    },
+    [] // eslint-disable-line react-hooks/exhaustive-deps -- Intentionally empty to avoid recreating callback; uses latest state via setState
+  );
 
   const renderContentBlocks = (
     blocks: ContentBlock[],
@@ -1299,7 +2102,9 @@ const AcpChatInterface: React.FC<Props> = ({
           : action === 'tool'
             ? primaryPath || query
             : primaryPath || toolCall.title || toolCall.kind;
-    const displayTarget = target ? truncateText(String(target), 160) : undefined;
+    const displayTarget = target
+      ? truncateText(collapseWhitespace(String(target)), 160)
+      : undefined;
     const leftMeta = hasDiff ? (
       <>
         <span className="text-emerald-600">+{diffTotals.additions}</span>
@@ -1323,6 +2128,8 @@ const AcpChatInterface: React.FC<Props> = ({
       }).length;
       if (sources) meta = <span>{sources} sources</span>;
     }
+
+    const showLoading = Boolean(options?.showLoading);
 
     return (
       <ActionRow
@@ -1374,12 +2181,37 @@ const AcpChatInterface: React.FC<Props> = ({
                       <div className="mt-1 text-[11px] text-white/60">Output truncated</div>
                     ) : null}
                   </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      </ActionRow>
+                ))}
+              </div>
+            ) : null}
+            {terminalItems.length ? (
+              <div className="space-y-2">
+                {terminalItems.map((item, idx) => {
+                  const output = terminalOutputs[item.terminalId] || '';
+                  const tail = getTailLines(output, 60);
+                  return (
+                    <div
+                      key={`${item.terminalId}-${idx}`}
+                      className="rounded-md bg-black/90 px-3 py-2 text-xs text-white"
+                    >
+                      <div className="mb-1 text-[11px] uppercase tracking-wide text-white/60">
+                        Terminal output
+                      </div>
+                      <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words">
+                        {tail.lines.join('\n')}
+                      </pre>
+                      {tail.truncated ? (
+                        <div className="mt-1 text-[11px] text-white/60">Output truncated</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        </ActionRow>
+        {showLoading ? <LoadingTimer label={runTimerLabel} /> : null}
+      </div>
     );
   };
 
@@ -1440,7 +2272,12 @@ const AcpChatInterface: React.FC<Props> = ({
     );
   };
 
-  const renderToolThoughtGroup = (groupId: string, buffer: FeedItem[], expanded: boolean) => {
+  const renderToolThoughtGroup = (
+    groupId: string,
+    buffer: FeedItem[],
+    expanded: boolean,
+    showLoading: boolean
+  ) => {
     const toolCount = buffer.filter((item) => item.type === 'tool').length;
     const thoughtCount = buffer.filter(
       (item) => item.type === 'message' && item.messageKind === 'thought'
@@ -1465,12 +2302,21 @@ const AcpChatInterface: React.FC<Props> = ({
         {expanded ? (
           <div className="mt-1 space-y-2">
             {buffer.map((item) => {
-              if (item.type === 'tool') return renderToolCall(item.toolCallId);
+              if (item.type === 'tool') {
+                return renderToolCall(item.toolCallId, {
+                  showLoading: showLoading && item.toolCallId === latestToolCallId,
+                });
+              }
               if (item.type === 'message' && item.messageKind === 'thought') {
                 return renderThoughtMessage(item);
               }
               return null;
             })}
+          </div>
+        ) : null}
+        {showLoading && !expanded ? (
+          <div className="mt-1">
+            <LoadingTimer label={runTimerLabel} />
           </div>
         ) : null}
       </div>
@@ -1515,12 +2361,32 @@ const AcpChatInterface: React.FC<Props> = ({
       : isUser
         ? 'max-w-[75%] rounded-2xl border border-sky-500/40 bg-sky-600 px-4 py-3 text-white shadow-sm dark:bg-sky-500/80'
         : 'max-w-[80%] text-sm text-foreground';
+    const showFooter =
+      item.role === 'assistant' &&
+      !item.messageKind &&
+      typeof item.runDurationMs === 'number';
+    const messageText = showFooter ? buildCopyText(item.blocks) : '';
+    const CopyIcon = copiedMessageId === item.id ? Check : Copy;
     return (
       <div key={item.id} className={wrapperClass}>
         <div className={base}>
           <div className={item.streaming && !isUser ? 'shimmer-text' : ''}>
             {renderContentBlocks(item.blocks)}
           </div>
+          {showFooter ? (
+            <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="tabular-nums">{formatDuration(item.runDurationMs ?? 0)}</span>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-foreground hover:bg-background"
+                onClick={() => handleCopyMessage(item.id, messageText)}
+                disabled={!messageText}
+              >
+                <CopyIcon className="h-3 w-3" />
+                <span>{copiedMessageId === item.id ? 'Copied' : 'Copy'}</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -1588,7 +2454,13 @@ const AcpChatInterface: React.FC<Props> = ({
               const flushInline = () => {
                 if (!buffer.length) return;
                 buffer.forEach((item) => {
-                  if (item.type === 'tool') rendered.push(renderToolCall(item.toolCallId));
+                  if (item.type === 'tool') {
+                    rendered.push(
+                      renderToolCall(item.toolCallId, {
+                        showLoading: showInlineToolLoading && item.toolCallId === latestToolCallId,
+                      })
+                    );
+                  }
                   if (item.type === 'message' && item.messageKind === 'thought') {
                     rendered.push(renderThoughtMessage(item));
                   }
@@ -1626,14 +2498,23 @@ const AcpChatInterface: React.FC<Props> = ({
                   const shouldCollapse = canCollapseBuffer(item);
                   if (!shouldCollapse) {
                     flushInline();
-                  }
-                  rendered.push(renderMessage(item));
-                  if (shouldCollapse) {
+                  } else {
                     const groupId = `tools-${item.id}`;
                     const expanded = Boolean(expandedItems[groupId]);
-                    rendered.push(renderToolThoughtGroup(groupId, buffer, expanded));
+                    const hasLatest =
+                      showInlineToolLoading &&
+                      Boolean(
+                        latestToolCallId &&
+                          buffer.some(
+                            (buffered) =>
+                              buffered.type === 'tool' &&
+                              buffered.toolCallId === latestToolCallId
+                          )
+                      );
+                    rendered.push(renderToolThoughtGroup(groupId, buffer, expanded, hasLatest));
                     buffer = [];
                   }
+                  rendered.push(renderMessage(item));
                   return;
                 }
 
@@ -1653,6 +2534,7 @@ const AcpChatInterface: React.FC<Props> = ({
               flushInline();
               return rendered;
             })()}
+            {showBottomLoading ? <LoadingTimer label={runTimerLabel} /> : null}
             <div ref={bottomRef} />
           </div>
         </div>
@@ -1754,13 +2636,27 @@ const AcpChatInterface: React.FC<Props> = ({
                     <OpenAIIcon className="h-3.5 w-3.5" />
                     <span>Codex</span>
                   </button>
-                  <Select value={modelId} onValueChange={setModelId}>
-                    <SelectTrigger className="h-8 w-auto rounded-md border border-border/60 bg-background/90 px-2.5 text-xs text-foreground shadow-sm">
-                      <SelectValue placeholder="Model" />
+                  <Select value={resolvedModelValue} onValueChange={handleModelChange}>
+                    <SelectTrigger
+                      disabled={!canSetModel || modelOptions.length === 0}
+                      className="h-8 w-auto rounded-md border border-border/60 bg-background/90 px-2.5 text-xs text-foreground shadow-sm"
+                    >
+                      <SelectValue
+                        placeholder={modelOptions.length ? 'Model' : 'Model (not supported)'}
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gpt-5.2-codex">GPT-5.2-Codex</SelectItem>
-                      <SelectItem value="gpt-5.2-mini">GPT-5.2-mini</SelectItem>
+                      {modelOptions.length ? (
+                        modelOptions.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="__empty" disabled>
+                          No models available
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <button
@@ -1770,11 +2666,41 @@ const AcpChatInterface: React.FC<Props> = ({
                     title={planModeEnabled ? 'Plan mode: read-only' : 'Full access'}
                     className={`flex h-8 items-center justify-center rounded-md px-2 text-muted-foreground transition ${
                       planModeEnabled
-                        ? 'bg-amber-500/10 text-amber-600'
-                        : 'bg-background/90 hover:bg-muted/40 hover:text-foreground'
+                        ? 'bg-sky-100/70 text-sky-700 hover:bg-sky-100/90 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/15'
+                        : 'bg-transparent hover:bg-muted/40 hover:text-foreground'
                     }`}
                   >
                     <Clipboard className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleThinkingBudgetClick}
+                    title={
+                      canSetThinkingBudget
+                        ? `Thinking budget: ${activeBudgetLabel}`
+                        : `Thinking budget: ${activeBudgetLabel} (not supported)`
+                    }
+                    aria-label={`Thinking budget: ${activeBudgetLabel}`}
+                    disabled={!canSetThinkingBudget}
+                    className="flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
+                  >
+                    <Brain className="h-4 w-4" />
+                    <span
+                      className="flex flex-col-reverse items-center justify-center"
+                      style={{ gap: `${dotGap}px` }}
+                      aria-hidden="true"
+                    >
+                      {Array.from({ length: dotCount }).map((_, idx) => (
+                        <span
+                          key={`thinking-dot-${idx}`}
+                          style={{ width: `${dotSize}px`, height: `${dotSize}px` }}
+                          className={`rounded-full ${
+                            idx <= activeBudgetIndex ? 'bg-current' : 'bg-muted-foreground/30'
+                          }`}
+                        />
+                      ))}
+                    </span>
+                    <span className="text-xs font-medium">{activeBudgetLabel}</span>
                   </button>
                 </div>
                 <div className="flex items-center gap-2">

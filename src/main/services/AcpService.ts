@@ -4,6 +4,8 @@ import fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import os from 'os';
 import path from 'path';
+import { extractCurrentModelId, extractModelsFromPayload } from '../../shared/acpUtils';
+import type { AcpConfigOption, AcpModel } from '../../shared/types/acp';
 import { log } from '../lib/logger';
 
 type JsonRpcMessage = {
@@ -43,6 +45,9 @@ type AcpSessionState = {
   cwd: string;
   proc: ChildProcessWithoutNullStreams;
   sessionId: string;
+  configOptions?: AcpConfigOption[];
+  models?: AcpModel[];
+  currentModelId?: string | null;
   pending: Map<number, PendingRequest>;
   pendingMeta: Map<number, { method: string; createdAt: number }>;
   pendingPermissions: Set<number>;
@@ -133,6 +138,25 @@ function maybeLogRaw(label: string, payload: any) {
     log.debug('acp:' + label, '[unserializable]');
   }
 }
+
+function extractConfigOptions(payload: any): AcpConfigOption[] {
+  if (!payload) return [];
+  const direct =
+    payload.configOptions ??
+    payload.config_options ??
+    payload.configs ??
+    payload.options ??
+    payload.config?.options;
+  if (Array.isArray(direct)) return direct as AcpConfigOption[];
+  const nested =
+    payload.configOptions?.options ??
+    payload.config_options?.options ??
+    payload.config?.configOptions ??
+    payload.config?.config_options;
+  if (Array.isArray(nested)) return nested as AcpConfigOption[];
+  return [];
+}
+
 
 function sessionKey(taskId: string, providerId: string): SessionKey {
   return `${taskId}:${providerId}`;
@@ -266,6 +290,9 @@ class AcpService {
       cwd,
       proc,
       sessionId: '',
+      configOptions: [],
+      models: [],
+      currentModelId: null,
       pending: new Map(),
       pendingMeta: new Map(),
       pendingPermissions: new Set(),
@@ -354,6 +381,16 @@ class AcpService {
       });
       log.debug('acp:session/new:response', { taskId, providerId, sessionRes });
       const sessionId = sessionRes?.sessionId as string | undefined;
+      const configOptions = extractConfigOptions(sessionRes);
+      const models = extractModelsFromPayload(sessionRes);
+      const currentModelId = extractCurrentModelId(sessionRes);
+      acpLog('session/new:config', {
+        taskId,
+        providerId,
+        configOptionsCount: configOptions.length,
+        modelsCount: models.length,
+        currentModelId,
+      });
       let modes: any[] = [];
       let currentModeId: string | null =
         sessionRes?.currentModeId ?? sessionRes?.modeId ?? sessionRes?.current_mode_id ?? null;
@@ -369,6 +406,9 @@ class AcpService {
         throw new Error('Missing sessionId from ACP agent');
       }
       state.sessionId = sessionId;
+      state.configOptions = configOptions;
+      state.models = models;
+      state.currentModelId = currentModelId ?? null;
       this.sessionById.set(sessionId, state);
 
       emitEvent({
@@ -380,6 +420,9 @@ class AcpService {
         agentCapabilities: state.agentCapabilities,
         modes,
         currentModeId,
+        configOptions,
+        models,
+        currentModelId,
       });
       log.debug('acp:session_started', { taskId, providerId, sessionId });
       return { success: true, sessionId };
@@ -489,6 +532,94 @@ class AcpService {
         sessionId,
         modeId,
       });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  }
+
+  async setModel(sessionId: string, modelId: string): Promise<{ success: boolean; error?: string }> {
+    const state = this.sessionById.get(sessionId);
+    acpLog('setModel', { sessionId, modelId, taskId: state?.taskId, providerId: state?.providerId });
+    if (!state) return { success: false, error: 'Session not found' };
+    if (!modelId) return { success: false, error: 'Missing modelId' };
+    try {
+      const res = await this.sendRequest(state, 'session/set_model', {
+        sessionId,
+        modelId,
+      });
+      const models = extractModelsFromPayload(res);
+      const currentModelId = extractCurrentModelId(res) ?? modelId;
+      if (models.length) state.models = models;
+      state.currentModelId = currentModelId;
+      const configOptions = extractConfigOptions(res);
+      if (configOptions.length) {
+        state.configOptions = configOptions;
+      }
+      emitEvent({
+        type: 'session_update',
+        taskId: state.taskId,
+        providerId: state.providerId,
+        sessionId: state.sessionId,
+        update: {
+          sessionUpdate: 'model_update',
+          models: state.models,
+          currentModelId: state.currentModelId,
+          configOptions: configOptions.length ? configOptions : undefined,
+        },
+      });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  }
+
+  async setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: unknown
+  ): Promise<{ success: boolean; error?: string }> {
+    const state = this.sessionById.get(sessionId);
+    acpLog('setConfigOption', {
+      sessionId,
+      configId,
+      taskId: state?.taskId,
+      providerId: state?.providerId,
+    });
+    if (!state) return { success: false, error: 'Session not found' };
+    if (!configId) return { success: false, error: 'Missing configId' };
+    try {
+      const res = await this.sendRequest(state, 'session/set_config_option', {
+        sessionId,
+        configId,
+        value,
+      });
+      const configOptions = extractConfigOptions(res);
+      const models = extractModelsFromPayload(res);
+      const currentModelId = extractCurrentModelId(res);
+      if (configOptions.length) {
+        state.configOptions = configOptions;
+      }
+      if (models.length) {
+        state.models = models;
+      }
+      if (currentModelId) {
+        state.currentModelId = currentModelId;
+      }
+      if (configOptions.length || models.length || currentModelId != null) {
+        emitEvent({
+          type: 'session_update',
+          taskId: state.taskId,
+          providerId: state.providerId,
+          sessionId: state.sessionId,
+          update: {
+            sessionUpdate: 'config_option_update',
+            configOptions: configOptions.length ? configOptions : undefined,
+            models: models.length ? models : undefined,
+            currentModelId: currentModelId ?? undefined,
+          },
+        });
+      }
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
@@ -766,10 +897,23 @@ class AcpService {
 
   private handleNotification(state: AcpSessionState, method: string, params: any) {
     if (method === 'session/update') {
-      log.debug('acp:session/update', {
-        sessionId: params?.sessionId,
-        updateType: params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind,
-      });
+      acpLog('session/update', { sessionId: params?.sessionId, updateType: params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind });
+      const updateType =
+        params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind;
+      if (updateType === 'config_option_update' || updateType === 'config_options_update') {
+        const nextOptions = extractConfigOptions(params?.update);
+        if (nextOptions.length) {
+          state.configOptions = nextOptions;
+        }
+      }
+      const nextModels = extractModelsFromPayload(params?.update);
+      if (nextModels.length) {
+        state.models = nextModels;
+      }
+      const nextCurrentModelId = extractCurrentModelId(params?.update);
+      if (nextCurrentModelId != null) {
+        state.currentModelId = nextCurrentModelId;
+      }
       emitEvent({
         type: 'session_update',
         taskId: state.taskId,
