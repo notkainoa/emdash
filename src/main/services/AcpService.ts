@@ -77,7 +77,6 @@ type PermissionResponseArgs = {
 type SessionKey = string;
 
 const PROTOCOL_VERSION = 1;
-const ACP_LOG_PREFIX = '[acp]';
 const CODEX_ALLOWED_REASONING = new Set(['minimal', 'low', 'medium', 'high']);
 const ACP_LOG_RAW = process.env.EMDASH_ACP_LOG_RAW === '1';
 
@@ -88,19 +87,9 @@ type CodexConfigSummary = {
   error?: string | null;
 };
 
-function acpLog(...args: any[]) {
-  // eslint-disable-next-line no-console
-  console.log(ACP_LOG_PREFIX, ...args);
-}
-
-function acpWarn(...args: any[]) {
-  // eslint-disable-next-line no-console
-  console.warn(ACP_LOG_PREFIX, ...args);
-}
-
 function logEnvSummary() {
   const pathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean).length;
-  acpLog('env:summary', {
+  log.debug('acp:env:summary', {
     execPath: process.execPath,
     nodeVersion: process.version,
     platform: process.platform,
@@ -131,7 +120,7 @@ async function readCodexConfigSummary(): Promise<CodexConfigSummary | null> {
       error && typeof error === 'object' && 'message' in error
         ? String(error.message)
         : String(error);
-    acpWarn('codexConfig:readFailed', { error: errorMessage });
+    log.warn('acp:codexConfig:readFailed', { error: errorMessage });
   }
   return null;
 }
@@ -139,9 +128,9 @@ async function readCodexConfigSummary(): Promise<CodexConfigSummary | null> {
 function maybeLogRaw(label: string, payload: any) {
   if (!ACP_LOG_RAW) return;
   try {
-    acpLog(label, payload);
+    log.debug('acp:' + label, payload);
   } catch {
-    acpLog(label, '[unserializable]');
+    log.debug('acp:' + label, '[unserializable]');
   }
 }
 
@@ -220,14 +209,14 @@ class AcpService {
     args: StartSessionArgs
   ): Promise<{ success: boolean; sessionId?: string; error?: string }> {
     const { taskId, providerId, cwd } = args;
-    acpLog('startSession', { taskId, providerId, cwd });
+    log.debug('acp:startSession', { taskId, providerId, cwd });
     logEnvSummary();
     if (providerId === 'codex') {
       const configSummary = await readCodexConfigSummary();
       if (configSummary) {
-        acpLog('codexConfig:summary', configSummary);
+        log.debug('acp:codexConfig:summary', configSummary);
         if (configSummary.error) {
-          acpWarn('startSession:codexConfigInvalid', {
+          log.warn('acp:startSession:codexConfigInvalid', {
             taskId,
             providerId,
             error: configSummary.error,
@@ -236,10 +225,10 @@ class AcpService {
           return { success: false, error: configSummary.error };
         }
       } else {
-        acpLog('codexConfig:missing', { taskId, providerId });
+        log.debug('acp:codexConfig:missing', { taskId, providerId });
       }
       if (!process.env.OPENAI_API_KEY && !process.env.CODEX_API_KEY) {
-        acpWarn('startSession:missingApiKey', {
+        log.warn('acp:startSession:missingApiKey', {
           taskId,
           providerId,
           note: 'OPENAI_API_KEY or CODEX_API_KEY not set; adapter may rely on ChatGPT auth.',
@@ -249,12 +238,12 @@ class AcpService {
     const key = sessionKey(taskId, providerId);
     const existing = this.sessions.get(key);
     if (existing && !existing.closed) {
-      acpLog('startSession:existing', { taskId, providerId, sessionId: existing.sessionId });
+      log.debug('acp:startSession:existing', { taskId, providerId, sessionId: existing.sessionId });
       return { success: true, sessionId: existing.sessionId };
     }
 
     const adapters = resolveAdapterCommand(providerId);
-    acpLog('adapter:candidates', { taskId, providerId, adapters });
+    log.debug('acp:adapter:candidates', { taskId, providerId, adapters });
     if (adapters.length === 0) {
       return { success: false, error: `No ACP adapter configured for ${providerId}` };
     }
@@ -263,7 +252,7 @@ class AcpService {
     try {
       proc = await this.spawnAdapter(adapters, cwd);
     } catch (error: any) {
-      acpWarn('startSession:spawnFailed', {
+      log.warn('acp:startSession:spawnFailed', {
         taskId,
         providerId,
         error: error?.message || String(error),
@@ -293,12 +282,12 @@ class AcpService {
       const text = chunk.toString('utf8');
       if (text.trim()) {
         state.lastStderr = `${state.lastStderr}${text}`.slice(-8000);
-        acpWarn('stderr', { taskId, providerId, text: text.trim().slice(0, 2000) });
+        log.warn('acp:stderr', { taskId, providerId, text: text.trim().slice(0, 2000) });
         log.warn('acp:stderr', { taskId, providerId, text: text.trim().slice(0, 1000) });
       }
     });
     proc.on('error', (error) => {
-      acpWarn('proc:error', {
+      log.warn('acp:proc:error', {
         taskId,
         providerId,
         error: (error as Error)?.message || String(error),
@@ -314,7 +303,7 @@ class AcpService {
       state.exitError = stderrHint
         ? `ACP adapter exited. stderr: ${stderrHint.slice(0, 2000)}`
         : `ACP adapter exited (code ${state.exitInfo.code ?? 'unknown'})`;
-      acpWarn('proc:exit', { taskId, providerId, sessionId: state.sessionId, code, signal });
+      log.warn('acp:proc:exit', { taskId, providerId, sessionId: state.sessionId, code, signal });
       emitEvent({
         type: 'session_exit',
         taskId,
@@ -339,7 +328,7 @@ class AcpService {
           version: app.getVersion(),
         },
       });
-      acpLog('initialize:response', {
+      log.debug('acp:initialize:response', {
         taskId,
         providerId,
         protocolVersion: initRes?.protocolVersion,
@@ -364,7 +353,7 @@ class AcpService {
         cwd,
         mcpServers: [],
       });
-      acpLog('session/new:response', { taskId, providerId, sessionRes });
+      log.debug('acp:session/new:response', { taskId, providerId, sessionRes });
       const sessionId = sessionRes?.sessionId as string | undefined;
       let modes: any[] = [];
       let currentModeId: string | null =
@@ -377,7 +366,7 @@ class AcpService {
         currentModeId = modesPayload.currentModeId ?? modesPayload.modeId ?? currentModeId ?? null;
       }
       if (!sessionId) {
-        acpWarn('session/new:missingSessionId', { taskId, providerId, sessionRes });
+        log.warn('acp:session/new:missingSessionId', { taskId, providerId, sessionRes });
         throw new Error('Missing sessionId from ACP agent');
       }
       state.sessionId = sessionId;
@@ -393,11 +382,11 @@ class AcpService {
         modes,
         currentModeId,
       });
-      acpLog('session_started', { taskId, providerId, sessionId });
+      log.debug('acp:session_started', { taskId, providerId, sessionId });
       return { success: true, sessionId };
     } catch (error: any) {
       const message = error?.message || String(error);
-      acpWarn('startSession:error', { taskId, providerId, error: message });
+      log.warn('acp:startSession:error', { taskId, providerId, error: message });
       emitEvent({ type: 'session_error', taskId, providerId, error: message });
       this.closeSession(state);
       return { success: false, error: message };
@@ -408,7 +397,7 @@ class AcpService {
     args: PromptArgs
   ): Promise<{ success: boolean; stopReason?: string; error?: string }> {
     const state = this.sessionById.get(args.sessionId);
-    acpLog('sendPrompt', {
+    log.debug('acp:sendPrompt', {
       sessionId: args.sessionId,
       taskId: state?.taskId,
       providerId: state?.providerId,
@@ -421,7 +410,7 @@ class AcpService {
         sessionId: args.sessionId,
         prompt: args.prompt,
       });
-      acpLog('session/prompt:response', {
+      log.debug('acp:session/prompt:response', {
         sessionId: args.sessionId,
         taskId: state.taskId,
         providerId: state.providerId,
@@ -437,7 +426,7 @@ class AcpService {
       });
       return { success: true, stopReason };
     } catch (error: any) {
-      acpWarn('sendPrompt:error', {
+      log.warn('acp:sendPrompt:error', {
         sessionId: args.sessionId,
         error: error?.message || String(error),
       });
@@ -448,27 +437,35 @@ class AcpService {
   cancelSession(sessionId: string) {
     const state = this.sessionById.get(sessionId);
     if (!state || state.closed) return;
-    acpLog('cancelSession', { sessionId, taskId: state.taskId, providerId: state.providerId });
+    log.debug('acp:cancelSession', {
+      sessionId,
+      taskId: state.taskId,
+      providerId: state.providerId,
+    });
     this.sendNotification(state, 'session/cancel', { sessionId });
   }
 
   disposeSession(sessionId: string) {
     const state = this.sessionById.get(sessionId);
     if (!state) return;
-    acpLog('disposeSession', { sessionId, taskId: state.taskId, providerId: state.providerId });
+    log.debug('acp:disposeSession', {
+      sessionId,
+      taskId: state.taskId,
+      providerId: state.providerId,
+    });
     this.closeSession(state);
   }
 
   respondPermission(args: PermissionResponseArgs): { success: boolean; error?: string } {
     const state = this.sessionById.get(args.sessionId);
-    acpLog('respondPermission', {
+    log.debug('acp:respondPermission', {
       sessionId: args.sessionId,
       requestId: args.requestId,
       outcome: args.outcome,
     });
     if (!state) return { success: false, error: 'Session not found' };
     if (!state.pendingPermissions.has(args.requestId)) {
-      acpWarn('respondPermission:missingRequest', {
+      log.warn('acp:respondPermission:missingRequest', {
         sessionId: args.sessionId,
         requestId: args.requestId,
       });
@@ -481,7 +478,12 @@ class AcpService {
 
   async setMode(sessionId: string, modeId: string): Promise<{ success: boolean; error?: string }> {
     const state = this.sessionById.get(sessionId);
-    acpLog('setMode', { sessionId, modeId, taskId: state?.taskId, providerId: state?.providerId });
+    log.debug('acp:setMode', {
+      sessionId,
+      modeId,
+      taskId: state?.taskId,
+      providerId: state?.providerId,
+    });
     if (!state) return { success: false, error: 'Session not found' };
     try {
       await this.sendRequest(state, 'session/set_mode', {
@@ -512,7 +514,7 @@ class AcpService {
         : method === 'session/new'
           ? { cwd: params?.cwd }
           : undefined;
-    acpLog('sendRequest', { id, method, sessionId: state.sessionId, paramSummary });
+    log.debug('acp:sendRequest', { id, method, sessionId: state.sessionId, paramSummary });
     maybeLogRaw('sendRequest:payload', payload);
     state.proc.stdin.write(body + '\n');
     return new Promise((resolve, reject) => {
@@ -527,7 +529,7 @@ class AcpService {
       method,
       params,
     };
-    acpLog('sendNotification', { method, sessionId: state.sessionId });
+    log.debug('acp:sendNotification', { method, sessionId: state.sessionId });
     maybeLogRaw('sendNotification:payload', payload);
     state.proc.stdin.write(JSON.stringify(payload) + '\n');
   }
@@ -538,7 +540,7 @@ class AcpService {
       id,
       result,
     };
-    acpLog('sendResponse', { id, sessionId: state.sessionId });
+    log.debug('acp:sendResponse', { id, sessionId: state.sessionId });
     maybeLogRaw('sendResponse:payload', payload);
     state.proc.stdin.write(JSON.stringify(payload) + '\n');
   }
@@ -549,7 +551,7 @@ class AcpService {
       id,
       error: { code, message },
     };
-    acpWarn('sendError', { id, code, message, sessionId: state.sessionId });
+    log.warn('acp:sendError', { id, code, message, sessionId: state.sessionId });
     maybeLogRaw('sendError:payload', payload);
     state.proc.stdin.write(JSON.stringify(payload) + '\n');
   }
@@ -561,13 +563,13 @@ class AcpService {
       const line = state.buffer.slice(0, idx).trim();
       state.buffer = state.buffer.slice(idx + 1);
       if (line.length > 0) {
-        acpLog('recv', {
+        log.debug('acp:recv', {
           sessionId: state.sessionId,
           length: line.length,
           line: line.slice(0, 2000),
         });
         if (ACP_LOG_RAW) {
-          acpLog('recv:raw', line);
+          log.debug('acp:recv:raw', line);
         }
         this.handleMessage(state, line);
       }
@@ -585,13 +587,13 @@ class AcpService {
     }
 
     if (msg.id !== undefined && msg.method) {
-      acpLog('recv:request', { id: msg.id, method: msg.method, sessionId: state.sessionId });
+      log.debug('acp:recv:request', { id: msg.id, method: msg.method, sessionId: state.sessionId });
       this.handleRequest(state, msg as JsonRpcMessage & { id: number; method: string });
       return;
     }
 
     if (msg.id !== undefined) {
-      acpLog('recv:response', {
+      log.debug('acp:recv:response', {
         id: msg.id,
         sessionId: state.sessionId,
         hasError: Boolean(msg.error),
@@ -610,12 +612,16 @@ class AcpService {
             : '';
         const detail = dataText ? `: ${dataText}` : '';
         if (meta) {
-          acpWarn('recv:response:error', { id: msg.id, method: meta.method, error: msg.error });
+          log.warn('acp:recv:response:error', {
+            id: msg.id,
+            method: meta.method,
+            error: msg.error,
+          });
         }
         pending.reject(new Error(`${msg.error.message || 'ACP error'}${detail}`));
       } else {
         if (meta) {
-          acpLog('recv:response:ok', {
+          log.debug('acp:recv:response:ok', {
             id: msg.id,
             method: meta.method,
             elapsedMs: Date.now() - meta.createdAt,
@@ -627,7 +633,7 @@ class AcpService {
     }
 
     if (msg.method) {
-      acpLog('recv:notification', { method: msg.method, sessionId: state.sessionId });
+      log.debug('acp:recv:notification', { method: msg.method, sessionId: state.sessionId });
       this.handleNotification(state, msg.method, msg.params);
     }
   }
@@ -641,7 +647,7 @@ class AcpService {
       switch (method) {
         case 'session/request_permission': {
           state.pendingPermissions.add(id);
-          acpLog('request_permission', { id, sessionId: state.sessionId, params });
+          log.debug('acp:request_permission', { id, sessionId: state.sessionId, params });
           emitEvent({
             type: 'permission_request',
             taskId: state.taskId,
@@ -653,7 +659,7 @@ class AcpService {
           return;
         }
         case 'fs/read_text_file': {
-          acpLog('fs/read_text_file', {
+          log.debug('acp:fs/read_text_file', {
             id,
             sessionId: state.sessionId,
             path: params?.path,
@@ -665,7 +671,7 @@ class AcpService {
           return;
         }
         case 'fs/write_text_file': {
-          acpLog('fs/write_text_file', {
+          log.debug('acp:fs/write_text_file', {
             id,
             sessionId: state.sessionId,
             path: params?.path,
@@ -676,7 +682,7 @@ class AcpService {
           return;
         }
         case 'terminal/create': {
-          acpLog('terminal/create', {
+          log.debug('acp:terminal/create', {
             id,
             sessionId: state.sessionId,
             command: params?.command,
@@ -688,7 +694,7 @@ class AcpService {
           return;
         }
         case 'terminal/output': {
-          acpLog('terminal/output', {
+          log.debug('acp:terminal/output', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -698,7 +704,7 @@ class AcpService {
           return;
         }
         case 'terminal/write': {
-          acpLog('terminal/write', {
+          log.debug('acp:terminal/write', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -709,7 +715,7 @@ class AcpService {
           return;
         }
         case 'terminal/resize': {
-          acpLog('terminal/resize', {
+          log.debug('acp:terminal/resize', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -721,7 +727,7 @@ class AcpService {
           return;
         }
         case 'terminal/wait_for_exit': {
-          acpLog('terminal/wait_for_exit', {
+          log.debug('acp:terminal/wait_for_exit', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -731,7 +737,7 @@ class AcpService {
           return;
         }
         case 'terminal/kill': {
-          acpLog('terminal/kill', {
+          log.debug('acp:terminal/kill', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -741,7 +747,7 @@ class AcpService {
           return;
         }
         case 'terminal/release': {
-          acpLog('terminal/release', {
+          log.debug('acp:terminal/release', {
             id,
             sessionId: state.sessionId,
             terminalId: params?.terminalId,
@@ -754,14 +760,14 @@ class AcpService {
           this.sendError(state, id, -32601, `Method not found: ${method}`);
       }
     } catch (error: any) {
-      acpWarn('handleRequest:error', { id, method, error: error?.message || String(error) });
+      log.warn('acp:handleRequest:error', { id, method, error: error?.message || String(error) });
       this.sendError(state, id, -32000, error?.message || String(error));
     }
   }
 
   private handleNotification(state: AcpSessionState, method: string, params: any) {
     if (method === 'session/update') {
-      acpLog('session/update', {
+      log.debug('acp:session/update', {
         sessionId: params?.sessionId,
         updateType: params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind,
       });
@@ -984,7 +990,7 @@ class AcpService {
   private closeSession(state: AcpSessionState) {
     if (state.closed) return;
     state.closed = true;
-    acpWarn('closeSession', {
+    log.warn('acp:closeSession', {
       taskId: state.taskId,
       providerId: state.providerId,
       sessionId: state.sessionId,
@@ -996,7 +1002,7 @@ class AcpService {
   }
 
   private cleanupSession(state: AcpSessionState) {
-    acpLog('cleanupSession', {
+    log.debug('acp:cleanupSession', {
       taskId: state.taskId,
       providerId: state.providerId,
       sessionId: state.sessionId,
@@ -1011,7 +1017,7 @@ class AcpService {
       const message = state.exitError || 'Session closed';
       const meta = state.pendingMeta.get(id);
       if (meta) {
-        acpWarn('cleanupSession:pending', {
+        log.warn('acp:cleanupSession:pending', {
           id,
           method: meta.method,
           ageMs: Date.now() - meta.createdAt,
@@ -1036,12 +1042,16 @@ class AcpService {
     return new Promise((resolve, reject) => {
       const trySpawn = (index: number) => {
         if (index >= candidates.length) {
-          acpWarn('spawnAdapter:exhausted', { cwd, candidates });
+          log.warn('acp:spawnAdapter:exhausted', { cwd, candidates });
           reject(new Error('Failed to start ACP adapter'));
           return;
         }
         const candidate = candidates[index];
-        acpLog('spawnAdapter:try', { command: candidate.command, args: candidate.args, cwd });
+        log.debug('acp:spawnAdapter:try', {
+          command: candidate.command,
+          args: candidate.args,
+          cwd,
+        });
         const child = spawn(candidate.command, candidate.args, {
           cwd,
           env: process.env,
@@ -1049,10 +1059,10 @@ class AcpService {
         });
         const handleError = (err: any) => {
           if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-            acpWarn('spawnAdapter:missing', { command: candidate.command, cwd });
+            log.warn('acp:spawnAdapter:missing', { command: candidate.command, cwd });
             trySpawn(index + 1);
           } else {
-            acpWarn('spawnAdapter:error', {
+            log.warn('acp:spawnAdapter:error', {
               command: candidate.command,
               error: err?.message || String(err),
             });
@@ -1062,7 +1072,7 @@ class AcpService {
         child.once('error', handleError);
         child.once('spawn', () => {
           child.off('error', handleError);
-          acpLog('spawnAdapter:success', { command: candidate.command, pid: child.pid });
+          log.debug('acp:spawnAdapter:success', { command: candidate.command, pid: child.pid });
           resolve(child);
         });
       };
