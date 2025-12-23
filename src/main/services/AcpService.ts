@@ -935,7 +935,9 @@ class AcpService {
     if (data) {
       try {
         record.proc.write(data);
-      } catch {}
+      } catch (err) {
+        log.debug('terminal:write:failed', { terminalId, error: err });
+      }
     }
   }
 
