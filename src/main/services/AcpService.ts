@@ -384,7 +384,7 @@ class AcpService {
       const configOptions = extractConfigOptions(sessionRes);
       const models = extractModelsFromPayload(sessionRes);
       const currentModelId = extractCurrentModelId(sessionRes);
-      acpLog('session/new:config', {
+      log.debug('acp:session/new:config', {
         taskId,
         providerId,
         configOptionsCount: configOptions.length,
@@ -540,7 +540,7 @@ class AcpService {
 
   async setModel(sessionId: string, modelId: string): Promise<{ success: boolean; error?: string }> {
     const state = this.sessionById.get(sessionId);
-    acpLog('setModel', { sessionId, modelId, taskId: state?.taskId, providerId: state?.providerId });
+    log.debug('acp:setModel', { sessionId, modelId, taskId: state?.taskId, providerId: state?.providerId });
     if (!state) return { success: false, error: 'Session not found' };
     if (!modelId) return { success: false, error: 'Missing modelId' };
     try {
@@ -580,7 +580,7 @@ class AcpService {
     value: unknown
   ): Promise<{ success: boolean; error?: string }> {
     const state = this.sessionById.get(sessionId);
-    acpLog('setConfigOption', {
+    log.debug('acp:setConfigOption', {
       sessionId,
       configId,
       taskId: state?.taskId,
@@ -897,7 +897,7 @@ class AcpService {
 
   private handleNotification(state: AcpSessionState, method: string, params: any) {
     if (method === 'session/update') {
-      acpLog('session/update', { sessionId: params?.sessionId, updateType: params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind });
+      log.debug('acp:session/update', { sessionId: params?.sessionId, updateType: params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind });
       const updateType =
         params?.update?.sessionUpdate || params?.update?.type || params?.update?.kind;
       if (updateType === 'config_option_update' || updateType === 'config_options_update') {

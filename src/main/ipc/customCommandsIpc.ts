@@ -49,7 +49,7 @@ export function registerCustomCommandsHandlers(): void {
     try {
       const { projectPath, providerId } = validateScanArgs(args);
       log.debug('acp:custom-commands:ipc:scan:request', { projectPath, providerId });
-      const commands = await scanCustomCommands(projectPath, providerId);
+      const commands = await scanCustomCommands(projectPath, providerId, log);
       log.debug('acp:custom-commands:ipc:scan:complete', { count: commands.length, providerId });
       return { success: true, commands };
     } catch (error: unknown) {

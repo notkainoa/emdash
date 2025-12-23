@@ -13,6 +13,14 @@ import { ProviderId } from './registry';
 import TOML from '@iarna/toml';
 
 /**
+ * Logger interface for dependency injection
+ */
+export type Logger = {
+  debug: (label: string, data?: Record<string, unknown>) => void;
+  error: (label: string, data?: Record<string, unknown>) => void;
+};
+
+/**
  * A custom slash command discovered from the filesystem
  */
 export interface CustomSlashCommand {
@@ -101,7 +109,7 @@ async function readDirectory(dirPath: string, extension: string): Promise<string
  *
  * For .toml files, parses TOML and looks for a description field
  */
-function extractDescription(content: string, extension: string): string | undefined {
+function extractDescription(content: string, extension: string, logger?: Logger): string | undefined {
   // Handle TOML files
   if (extension === '.toml') {
     try {
@@ -111,9 +119,9 @@ function extractDescription(content: string, extension: string): string | undefi
       }
     } catch (error: unknown) {
       // If TOML parsing fails, log the error and fall through to generic text handling
-      console.error(
-        `Failed to parse TOML file: ${error instanceof Error ? error.message : String(error)}`
-      );
+      logger?.error('customCommands:toml:parseFailed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
     // Fall through to text-based extraction if TOML parsing fails or no description found
   }
@@ -147,7 +155,8 @@ async function scanCommandsDirectory(
   dirPath: string,
   source: 'project' | 'global',
   provider: ProviderId,
-  extension: string
+  extension: string,
+  logger?: Logger
 ): Promise<CustomSlashCommand[]> {
   const commands: CustomSlashCommand[] = [];
   const files = await readDirectory(dirPath, extension);
@@ -158,7 +167,7 @@ async function scanCommandsDirectory(
       const content = await fs.readFile(filePath, 'utf-8');
       // Use path.parse().name to robustly extract filename without extension
       const name = path.parse(file).name;
-      const description = extractDescription(content, extension);
+      const description = extractDescription(content, extension, logger);
 
       commands.push({
         name,
@@ -169,9 +178,10 @@ async function scanCommandsDirectory(
       });
     } catch (error: unknown) {
       // Skip files we can't read, but log for debugging
-      console.error(
-        `Failed to read command file ${filePath}: ${error instanceof Error ? error.message : String(error)}`
-      );
+      logger?.error('customCommands:file:readFailed', {
+        filePath,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -183,11 +193,13 @@ async function scanCommandsDirectory(
  *
  * @param projectPath - The project root directory
  * @param providerId - The provider to scan commands for
+ * @param logger - Optional logger for error reporting
  * @returns Array of custom commands (both project and global)
  */
 export async function scanCustomCommands(
   projectPath: string,
-  providerId: ProviderId
+  providerId: ProviderId,
+  logger?: Logger
 ): Promise<CustomSlashCommand[]> {
   const config = COMMAND_DIRECTORIES[providerId];
   if (!config) {
@@ -201,7 +213,8 @@ export async function scanCustomCommands(
         path.join(projectPath, projectDir),
         'project',
         providerId,
-        config.extension
+        config.extension,
+        logger
       )
     )
   );
@@ -214,7 +227,8 @@ export async function scanCustomCommands(
         path.join(os.homedir(), globalDir),
         'global',
         providerId,
-        config.extension
+        config.extension,
+        logger
       )
     )
   );
