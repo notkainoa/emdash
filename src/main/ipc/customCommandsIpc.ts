@@ -36,32 +36,31 @@ function validateScanArgs(args: unknown): { projectPath: string; providerId: Pro
   }
 
   if (!isValidProviderId(providerId)) {
-    throw new Error(`Unknown providerId: "${providerId}". Allowed providers: ${PROVIDER_IDS.join(', ')}`);
+    throw new Error(
+      `Unknown providerId: "${providerId}". Allowed providers: ${PROVIDER_IDS.join(', ')}`
+    );
   }
 
   return { projectPath, providerId: providerId as ProviderId };
 }
 
 export function registerCustomCommandsHandlers(): void {
-  ipcMain.handle(
-    'custom-commands:scan',
-    async (_event, args: unknown) => {
-      try {
-        const { projectPath, providerId } = validateScanArgs(args);
-        log.debug('acp:custom-commands:ipc:scan:request', { projectPath, providerId });
-        const commands = await scanCustomCommands(projectPath, providerId);
-        log.debug('acp:custom-commands:ipc:scan:complete', { count: commands.length, providerId });
-        return { success: true, commands };
-      } catch (error: unknown) {
-        const errorMessage =
-          error && typeof error === 'object' && 'message' in error
-            ? String(error.message)
-            : String(error);
-        log.error('acp:custom-commands:ipc:scan:failed', {
-          error: errorMessage,
-        });
-        return { success: false, error: errorMessage || 'Failed to scan custom commands' };
-      }
+  ipcMain.handle('custom-commands:scan', async (_event, args: unknown) => {
+    try {
+      const { projectPath, providerId } = validateScanArgs(args);
+      log.debug('acp:custom-commands:ipc:scan:request', { projectPath, providerId });
+      const commands = await scanCustomCommands(projectPath, providerId);
+      log.debug('acp:custom-commands:ipc:scan:complete', { count: commands.length, providerId });
+      return { success: true, commands };
+    } catch (error: unknown) {
+      const errorMessage =
+        error && typeof error === 'object' && 'message' in error
+          ? String(error.message)
+          : String(error);
+      log.error('acp:custom-commands:ipc:scan:failed', {
+        error: errorMessage,
+      });
+      return { success: false, error: errorMessage || 'Failed to scan custom commands' };
     }
-  );
+  });
 }
