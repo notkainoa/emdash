@@ -12,24 +12,17 @@ export function registerCustomCommandsHandlers(): void {
     'custom-commands:scan',
     async (_event, args: { projectPath: string; providerId: string }) => {
       const { projectPath, providerId } = args;
-      console.log('[custom-commands IPC] Received scan request', { projectPath, providerId });
       try {
-        log.debug('Scanning custom commands', { projectPath, providerId });
+        log.debug('acp:custom-commands:ipc:scan:request', { projectPath, providerId });
         const commands = await scanCustomCommands(projectPath, providerId as ProviderId);
-        console.log('[custom-commands IPC] Scan complete', { count: commands.length, providerId });
-        log.debug('Found custom commands', { count: commands.length, providerId });
+        log.debug('acp:custom-commands:ipc:scan:complete', { count: commands.length, providerId });
         return { success: true, commands };
       } catch (error: unknown) {
         const errorMessage =
           error && typeof error === 'object' && 'message' in error
             ? String(error.message)
             : String(error);
-        console.error('[custom-commands IPC] Scan failed', {
-          projectPath,
-          providerId,
-          error: errorMessage,
-        });
-        log.error('Failed to scan custom commands', {
+        log.error('acp:custom-commands:ipc:scan:failed', {
           projectPath,
           providerId,
           error: errorMessage,
