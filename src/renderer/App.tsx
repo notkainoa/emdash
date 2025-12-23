@@ -108,6 +108,7 @@ const AppContent: React.FC = () => {
   const { toast } = useToast();
   const [_, setVersion] = useState<string>('');
   const [platform, setPlatform] = useState<string>('');
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const {
     installed: ghInstalled,
     authenticated: isAuthenticated,
@@ -501,6 +502,19 @@ const AppContent: React.FC = () => {
 
     loadAppData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track fullscreen state for macOS titlebar padding
+  useEffect(() => {
+    // Get initial state
+    window.electronAPI.getFullScreenState().then(setIsFullscreen);
+
+    // Listen for native fullscreen changes from main process
+    const unsubscribe = window.electronAPI.onFullScreenChange((isFull) => {
+      setIsFullscreen(isFull);
+    });
+
+    return unsubscribe;
   }, []);
 
   const handleOpenProject = async () => {
@@ -1916,8 +1930,6 @@ const AppContent: React.FC = () => {
               setCollapsedRef={rightSidebarSetCollapsedRef}
             />
             <Titlebar
-              onToggleSettings={handleToggleSettings}
-              isSettingsOpen={showSettings}
               currentPath={
                 activeTask?.metadata?.multiAgent?.enabled
                   ? null
@@ -1930,10 +1942,11 @@ const AppContent: React.FC = () => {
               taskPath={activeTask?.path || null}
               projectPath={selectedProject?.path || null}
               isTaskMultiAgent={Boolean(activeTask?.metadata?.multiAgent?.enabled)}
-              githubUser={user}
               onToggleKanban={handleToggleKanban}
               isKanbanOpen={Boolean(showKanban)}
               kanbanAvailable={Boolean(selectedProject)}
+              platform={platform}
+              isFullscreen={isFullscreen}
             />
             <div className="flex flex-1 overflow-hidden pt-[var(--tb)]">
               <ResizablePanelGroup
@@ -1975,6 +1988,8 @@ const AppContent: React.FC = () => {
                     onDeleteTask={handleDeleteTask}
                     onDeleteProject={handleDeleteProject}
                     isHomeView={showHomeView}
+                    onToggleSettings={handleToggleSettings}
+                    isSettingsOpen={showSettings}
                   />
                 </ResizablePanel>
                 <ResizableHandle
