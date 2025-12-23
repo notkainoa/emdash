@@ -187,35 +187,36 @@ export async function scanCustomCommands(
     return [];
   }
 
-  const commands: CustomSlashCommand[] = [];
+  // Scan all project directories in parallel
+  const projectCommandArrays = await Promise.all(
+    config.projectDirs.map((projectDir) =>
+      scanCommandsDirectory(
+        path.join(projectPath, projectDir),
+        'project',
+        providerId,
+        config.extension
+      )
+    )
+  );
+  const commands = projectCommandArrays.flat();
 
-  // Scan all project directories
-  for (const projectDir of config.projectDirs) {
-    const projectDirPath = path.join(projectPath, projectDir);
-    const projectCommands = await scanCommandsDirectory(
-      projectDirPath,
-      'project',
-      providerId,
-      config.extension
-    );
-    commands.push(...projectCommands);
-  }
+  // Scan all global directories in parallel
+  const globalCommandArrays = await Promise.all(
+    config.globalDirs.map((globalDir) =>
+      scanCommandsDirectory(
+        path.join(os.homedir(), globalDir),
+        'global',
+        providerId,
+        config.extension
+      )
+    )
+  );
+  const allGlobalCommands = globalCommandArrays.flat();
 
-  // Scan all global directories
-  for (const globalDir of config.globalDirs) {
-    const globalDirPath = path.join(os.homedir(), globalDir);
-    const globalCommands = await scanCommandsDirectory(
-      globalDirPath,
-      'global',
-      providerId,
-      config.extension
-    );
-
-    // Filter out global commands that are overridden by project commands
-    for (const globalCmd of globalCommands) {
-      if (!commands.some((c) => c.name === globalCmd.name)) {
-        commands.push(globalCmd);
-      }
+  // Filter out global commands that are overridden by project commands
+  for (const globalCmd of allGlobalCommands) {
+    if (!commands.some((c) => c.name === globalCmd.name)) {
+      commands.push(globalCmd);
     }
   }
 
