@@ -80,11 +80,13 @@ function expandHome(filePath: string): string {
 /**
  * Read directory and return files matching the extension
  */
-async function readDirectory(
-  dirPath: string,
-  extension: string
-): Promise<string[]> {
-  console.log('[custom-commands readDirectory] Reading directory:', dirPath, 'extension:', extension);
+async function readDirectory(dirPath: string, extension: string): Promise<string[]> {
+  console.log(
+    '[custom-commands readDirectory] Reading directory:',
+    dirPath,
+    'extension:',
+    extension
+  );
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     const files = entries
@@ -94,9 +96,16 @@ async function readDirectory(
     return files;
   } catch (error: unknown) {
     // Directory doesn't exist or isn't readable - not an error
-    if (error && typeof error === 'object' && 'code' in error &&
-        (error.code === 'ENOENT' || error.code === 'EACCES')) {
-      console.log('[custom-commands readDirectory] Directory does not exist or is not accessible:', dirPath);
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'EACCES')
+    ) {
+      console.log(
+        '[custom-commands readDirectory] Directory does not exist or is not accessible:',
+        dirPath
+      );
       return [];
     }
     console.error('[custom-commands readDirectory] Error reading directory:', dirPath, error);

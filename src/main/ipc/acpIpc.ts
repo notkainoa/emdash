@@ -2,13 +2,19 @@ import { ipcMain } from 'electron';
 import { acpService } from '../services/AcpService';
 
 export function registerAcpIpc() {
-  ipcMain.handle('acp:start', async (_event, args: { taskId: string; providerId: string; cwd: string }) => {
-    return acpService.startSession(args);
-  });
+  ipcMain.handle(
+    'acp:start',
+    async (_event, args: { taskId: string; providerId: string; cwd: string }) => {
+      return acpService.startSession(args);
+    }
+  );
 
   ipcMain.handle(
     'acp:prompt',
-    async (_event, args: { sessionId: string; prompt: Array<{ type: string; [key: string]: any }> }) => {
+    async (
+      _event,
+      args: { sessionId: string; prompt: Array<{ type: string; [key: string]: any }> }
+    ) => {
       return acpService.sendPrompt(args);
     }
   );

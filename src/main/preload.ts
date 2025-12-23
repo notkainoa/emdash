@@ -81,8 +81,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ACP (Agent Client Protocol)
   acpStartSession: (args: { taskId: string; providerId: string; cwd: string }) =>
     ipcRenderer.invoke('acp:start', args),
-  acpSendPrompt: (args: { sessionId: string; prompt: Array<{ type: string; [key: string]: any }> }) =>
-    ipcRenderer.invoke('acp:prompt', args),
+  acpSendPrompt: (args: {
+    sessionId: string;
+    prompt: Array<{ type: string; [key: string]: any }>;
+  }) => ipcRenderer.invoke('acp:prompt', args),
   acpCancel: (args: { sessionId: string }) => ipcRenderer.invoke('acp:cancel', args),
   acpDispose: (args: { sessionId: string }) => ipcRenderer.invoke('acp:dispose', args),
   acpRespondPermission: (args: {

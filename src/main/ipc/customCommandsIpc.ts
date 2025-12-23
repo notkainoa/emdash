@@ -20,10 +20,15 @@ export function registerCustomCommandsHandlers(): void {
         log.debug('Found custom commands', { count: commands.length, providerId });
         return { success: true, commands };
       } catch (error: unknown) {
-        const errorMessage = error && typeof error === 'object' && 'message' in error
-          ? String(error.message)
-          : String(error);
-        console.error('[custom-commands IPC] Scan failed', { projectPath, providerId, error: errorMessage });
+        const errorMessage =
+          error && typeof error === 'object' && 'message' in error
+            ? String(error.message)
+            : String(error);
+        console.error('[custom-commands IPC] Scan failed', {
+          projectPath,
+          providerId,
+          error: errorMessage,
+        });
         log.error('Failed to scan custom commands', {
           projectPath,
           providerId,

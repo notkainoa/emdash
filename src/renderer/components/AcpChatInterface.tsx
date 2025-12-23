@@ -34,13 +34,7 @@ import { type Provider } from '../types';
 import InstallBanner from './InstallBanner';
 import { Button } from './ui/button';
 import { getInstallCommandForProvider } from '@shared/providers/registry';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 type ContentBlock = {
   type: string;
@@ -139,8 +133,7 @@ const DEFAULT_TRUNCATE_LIMIT = 120;
 
 const normalizeNewlines = (text: string) => text.replace(/\r\n/g, '\n');
 
-const splitLines = (text: string) =>
-  normalizeNewlines(text).split('\n');
+const splitLines = (text: string) => normalizeNewlines(text).split('\n');
 
 const truncateText = (text: string, limit: number = DEFAULT_TRUNCATE_LIMIT) => {
   if (text.length <= limit) return text;
@@ -266,11 +259,7 @@ const buildFallbackDiffLines = (
   ];
 };
 
-const trimDiffLines = (
-  lines: DiffPreviewLine[],
-  maxLines: number,
-  context: number
-) => {
+const trimDiffLines = (lines: DiffPreviewLine[], maxLines: number, context: number) => {
   if (lines.length <= maxLines) {
     return { lines, truncated: false };
   }
@@ -313,7 +302,10 @@ const trimDiffLines = (
   let lastSlice = lines.slice(last.start, last.end + 1);
   if (firstSlice.length > half) firstSlice = firstSlice.slice(0, half);
   if (lastSlice.length > half) lastSlice = lastSlice.slice(lastSlice.length - half);
-  return { lines: [...firstSlice, { type: 'context', text: '...' }, ...lastSlice], truncated: true };
+  return {
+    lines: [...firstSlice, { type: 'context', text: '...' }, ...lastSlice],
+    truncated: true,
+  };
 };
 
 const buildDiffPreview = (oldText: string, newText: string) => {
@@ -386,9 +378,11 @@ const AcpChatInterface: React.FC<Props> = ({
     console.log('[custom-commands] Commands state updated:', commands.length, commands);
   }, [commands]);
 
-  const [plan, setPlan] = useState<
-    Array<{ content?: string; status?: string; priority?: string }> | null
-  >(null);
+  const [plan, setPlan] = useState<Array<{
+    content?: string;
+    status?: string;
+    priority?: string;
+  }> | null>(null);
   const [input, setInput] = useState('');
   const [showPlan, setShowPlan] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
@@ -617,9 +611,7 @@ const AcpChatInterface: React.FC<Props> = ({
           setFeed((prev) => {
             const existing = prev.find((item) => item.type === 'plan');
             if (existing) {
-              return prev.map((item) =>
-                item.type === 'plan' ? { ...item, entries } : item
-              );
+              return prev.map((item) => (item.type === 'plan' ? { ...item, entries } : item));
             }
             return [...prev, { id: `plan-${Date.now()}`, type: 'plan', entries }];
           });
@@ -637,24 +629,23 @@ const AcpChatInterface: React.FC<Props> = ({
             } else if (payloadUpdate.content) {
               content = [...content, payloadUpdate.content];
             }
-            const rawInput =
-              payloadUpdate.rawInput ?? payloadUpdate.input ?? undefined;
-            const rawOutput =
-              payloadUpdate.rawOutput ?? payloadUpdate.output ?? undefined;
+            const rawInput = payloadUpdate.rawInput ?? payloadUpdate.input ?? undefined;
+            const rawOutput = payloadUpdate.rawOutput ?? payloadUpdate.output ?? undefined;
             const next: ToolCall = {
               ...existing,
               ...payloadUpdate,
               toolCallId,
               content,
-              rawInput:
-                rawInput === undefined ? existing.rawInput : normalizeRawValue(rawInput),
+              rawInput: rawInput === undefined ? existing.rawInput : normalizeRawValue(rawInput),
               rawOutput:
                 rawOutput === undefined ? existing.rawOutput : normalizeRawValue(rawOutput),
             };
             return { ...prev, [toolCallId]: next };
           });
           setFeed((prev) => {
-            const already = prev.some((item) => item.type === 'tool' && item.toolCallId === toolCallId);
+            const already = prev.some(
+              (item) => item.type === 'tool' && item.toolCallId === toolCallId
+            );
             if (already) return prev;
             return [...prev, { id: `tool-${toolCallId}`, type: 'tool', toolCallId }];
           });
@@ -758,9 +749,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const extractPrimaryText = (blocks: ContentBlock[]) => {
     const textBlock = blocks.find((block) => block.type === 'text' && block.text);
     if (textBlock?.text) return textBlock.text;
-    const resourceBlock = blocks.find(
-      (block) => block.type === 'resource' && block.resource?.text
-    );
+    const resourceBlock = blocks.find((block) => block.type === 'resource' && block.resource?.text);
     return resourceBlock?.resource?.text || '';
   };
 
@@ -866,7 +855,9 @@ const AcpChatInterface: React.FC<Props> = ({
       delete next[requestId];
       return next;
     });
-    setFeed((prev) => prev.filter((item) => !(item.type === 'permission' && item.requestId === requestId)));
+    setFeed((prev) =>
+      prev.filter((item) => !(item.type === 'permission' && item.requestId === requestId))
+    );
   };
 
   const handleAttachClick = () => {
@@ -884,8 +875,7 @@ const AcpChatInterface: React.FC<Props> = ({
       const isImage = mimeType.startsWith('image/');
       const isAudio = mimeType.startsWith('audio/');
       const isText =
-        mimeType.startsWith('text/') ||
-        /\.(md|txt|ts|tsx|js|jsx|json|yml|yaml)$/i.test(name);
+        mimeType.startsWith('text/') || /\.(md|txt|ts|tsx|js|jsx|json|yml|yaml)$/i.test(name);
       const supportsImage = Boolean(promptCaps.image);
       const supportsAudio = Boolean(promptCaps.audio);
       const supportsEmbedded = Boolean(promptCaps.embeddedContext);
@@ -1043,12 +1033,7 @@ const AcpChatInterface: React.FC<Props> = ({
         const resource = block.resource || {};
         const uri = (resource.uri as string | undefined) || block.uri || '';
         const label =
-          resource.title ||
-          resource.name ||
-          block.title ||
-          block.name ||
-          uri ||
-          'resource';
+          resource.title || resource.name || block.title || block.name || uri || 'resource';
         const previewText = (resource.text as string | undefined) || block.text;
         const isFile = uri.startsWith('file://');
         const filePath = isFile ? fromFileUri(uri) : '';
@@ -1112,8 +1097,7 @@ const AcpChatInterface: React.FC<Props> = ({
     onToggle?: () => void;
     children?: React.ReactNode;
   }> = ({ id, icon, label, target, leftMeta, meta, status, expanded, onToggle, children }) => {
-    const showStatus =
-      status !== undefined && ['failed', 'cancelled', 'error'].includes(status);
+    const showStatus = status !== undefined && ['failed', 'cancelled', 'error'].includes(status);
     const statusClass =
       status && statusStyles[status]
         ? statusStyles[status]
@@ -1132,7 +1116,7 @@ const AcpChatInterface: React.FC<Props> = ({
           </span>
           <span className="min-w-0 flex-1 overflow-hidden text-sm">
             <span className="font-medium text-foreground">{label}</span>
-            {(target || leftMeta) ? (
+            {target || leftMeta ? (
               <span className="ml-2 inline-flex min-w-0 items-center gap-2 overflow-hidden text-muted-foreground">
                 {target ? (
                   <span className="overflow-hidden whitespace-nowrap">{target}</span>
@@ -1144,7 +1128,9 @@ const AcpChatInterface: React.FC<Props> = ({
           <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
             {meta}
             {showStatus ? (
-              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusClass}`}>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusClass}`}
+              >
                 {status.replace('_', ' ')}
               </span>
             ) : null}
@@ -1204,8 +1190,7 @@ const AcpChatInterface: React.FC<Props> = ({
     const expandedKey = `tool-${toolCallId}`;
     const expanded = Boolean(expandedItems[expandedKey]);
     const kindLabel = `${toolCall.title || ''} ${toolCall.kind || ''}`.toLowerCase();
-    const diffItems = (toolCall.content?.filter((item) => item.type === 'diff') ||
-      []) as Array<{
+    const diffItems = (toolCall.content?.filter((item) => item.type === 'diff') || []) as Array<{
       type: 'diff';
       path?: string;
       oldText?: string;
@@ -1239,7 +1224,9 @@ const AcpChatInterface: React.FC<Props> = ({
 
     const parsedInput = safeJsonParse(toolCall.rawInput);
     const command = parsedInput?.command
-      ? [parsedInput.command, ...(Array.isArray(parsedInput.args) ? parsedInput.args : [])].join(' ')
+      ? [parsedInput.command, ...(Array.isArray(parsedInput.args) ? parsedInput.args : [])].join(
+          ' '
+        )
       : null;
     const query =
       parsedInput?.query || parsedInput?.search || parsedInput?.input || parsedInput?.prompt;
@@ -1349,7 +1336,9 @@ const AcpChatInterface: React.FC<Props> = ({
           {contentBlocks.length ? (
             <div className="space-y-2">
               {contentBlocks.map((item, idx) => (
-                <div key={idx}>{renderContentBlocks([item.content], { compact: true, maxPreviewChars: 280 })}</div>
+                <div key={idx}>
+                  {renderContentBlocks([item.content], { compact: true, maxPreviewChars: 280 })}
+                </div>
               ))}
             </div>
           ) : null}
@@ -1389,7 +1378,10 @@ const AcpChatInterface: React.FC<Props> = ({
       (request as any).title ||
       'Permission required';
     return (
-      <div key={request.requestId} className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+      <div
+        key={request.requestId}
+        className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive"
+      >
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4" />
           <div className="space-y-1">
@@ -1436,11 +1428,7 @@ const AcpChatInterface: React.FC<Props> = ({
     );
   };
 
-  const renderToolThoughtGroup = (
-    groupId: string,
-    buffer: FeedItem[],
-    expanded: boolean
-  ) => {
+  const renderToolThoughtGroup = (groupId: string, buffer: FeedItem[], expanded: boolean) => {
     const toolCount = buffer.filter((item) => item.type === 'tool').length;
     const thoughtCount = buffer.filter(
       (item) => item.type === 'message' && item.messageKind === 'thought'
@@ -1458,9 +1446,7 @@ const AcpChatInterface: React.FC<Props> = ({
           className="group flex items-center gap-2 rounded-md px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/20 hover:text-foreground"
         >
           <ChevronRight
-            className={`h-3.5 w-3.5 transition-transform ${
-              expanded ? 'rotate-90' : ''
-            }`}
+            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
           />
           <span>{parts.join(', ')}</span>
         </button>
@@ -1598,9 +1584,7 @@ const AcpChatInterface: React.FC<Props> = ({
                 buffer = [];
               };
 
-              const canCollapseBuffer = (
-                assistantItem: Extract<FeedItem, { type: 'message' }>
-              ) => {
+              const canCollapseBuffer = (assistantItem: Extract<FeedItem, { type: 'message' }>) => {
                 if (!buffer.length) return false;
                 if (assistantItem.streaming) return false;
                 for (const item of buffer) {
@@ -1619,7 +1603,7 @@ const AcpChatInterface: React.FC<Props> = ({
 
               feed.forEach((item) => {
                 if (
-                  (item.type === 'tool') ||
+                  item.type === 'tool' ||
                   (item.type === 'message' && item.messageKind === 'thought')
                 ) {
                   buffer.push(item);
@@ -1771,11 +1755,7 @@ const AcpChatInterface: React.FC<Props> = ({
                     type="button"
                     onClick={() => setPlanModeEnabled((prev) => !prev)}
                     aria-pressed={planModeEnabled}
-                    title={
-                      planModeEnabled
-                        ? 'Plan mode: read-only'
-                        : 'Full access'
-                    }
+                    title={planModeEnabled ? 'Plan mode: read-only' : 'Full access'}
                     className={`flex h-8 items-center justify-center rounded-md px-2 text-muted-foreground transition ${
                       planModeEnabled
                         ? 'bg-amber-500/10 text-amber-600'
@@ -1804,19 +1784,13 @@ const AcpChatInterface: React.FC<Props> = ({
                     disabled={!sessionId || (isRunning ? false : !canSend)}
                     variant={isRunning ? 'secondary' : 'default'}
                   >
-                    {isRunning ? (
-                      <Square className="h-4 w-4" />
-                    ) : (
-                      <ArrowUp className="h-4 w-4" />
-                    )}
+                    {isRunning ? <Square className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
                   </Button>
                 </div>
               </div>
             </div>
             {commandHint ? (
-              <div className="text-xs text-muted-foreground">
-                Hint: {commandHint}
-              </div>
+              <div className="text-xs text-muted-foreground">Hint: {commandHint}</div>
             ) : null}
           </div>
         </div>

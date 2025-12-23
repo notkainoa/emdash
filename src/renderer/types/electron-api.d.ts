@@ -202,10 +202,7 @@ declare global {
         error?: string;
       }>;
       onAcpEvent: (listener: (payload: any) => void) => () => void;
-      scanCustomCommands: (args: {
-        projectPath: string;
-        providerId: string;
-      }) => Promise<{
+      scanCustomCommands: (args: { projectPath: string; providerId: string }) => Promise<{
         success: boolean;
         commands?: CustomSlashCommand[];
         error?: string;
