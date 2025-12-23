@@ -10,6 +10,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ProviderId } from './registry';
+import TOML from '@iarna/toml';
 
 /**
  * A custom slash command discovered from the filesystem
@@ -71,18 +72,11 @@ export const COMMAND_DIRECTORIES: Partial<Record<ProviderId, CommandDirectoryCon
  * Read directory and return files matching the extension
  */
 async function readDirectory(dirPath: string, extension: string): Promise<string[]> {
-  console.log(
-    '[custom-commands readDirectory] Reading directory:',
-    dirPath,
-    'extension:',
-    extension
-  );
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     const files = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
       .map((entry) => entry.name);
-    console.log('[custom-commands readDirectory] Found files:', files.length, files);
     return files;
   } catch (error: unknown) {
     // Directory doesn't exist or isn't readable - not an error
@@ -92,13 +86,8 @@ async function readDirectory(dirPath: string, extension: string): Promise<string
       'code' in error &&
       (error.code === 'ENOENT' || error.code === 'EACCES')
     ) {
-      console.log(
-        '[custom-commands readDirectory] Directory does not exist or is not accessible:',
-        dirPath
-      );
       return [];
     }
-    console.error('[custom-commands readDirectory] Error reading directory:', dirPath, error);
     throw error;
   }
 }
@@ -109,14 +98,30 @@ async function readDirectory(dirPath: string, extension: string): Promise<string
  * For .md files, tries to find:
  * 1. First heading (# Title)
  * 2. First line (if short)
+ *
+ * For .toml files, parses TOML and looks for a description field
  */
-function extractDescription(content: string): string | undefined {
+function extractDescription(content: string, extension: string): string | undefined {
+  // Handle TOML files
+  if (extension === '.toml') {
+    try {
+      const parsed = TOML.parse(content) as Record<string, unknown>;
+      if (typeof parsed.description === 'string') {
+        return parsed.description;
+      }
+    } catch {
+      // If TOML parsing fails, fall through to generic text handling
+    }
+    // Fall through to text-based extraction if TOML parsing fails or no description found
+  }
+
+  // Handle Markdown and other text files
   const lines = content.split('\n').map((l) => l.trim());
 
   for (const line of lines) {
     if (!line) continue;
 
-    // Check for # heading
+    // Check for # heading (Markdown)
     if (line.startsWith('#')) {
       return line.substring(1).trim();
     }
@@ -149,7 +154,7 @@ async function scanCommandsDirectory(
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       const name = file.endsWith(extension) ? file.slice(0, -extension.length) : file;
-      const description = extractDescription(content);
+      const description = extractDescription(content, extension);
 
       commands.push({
         name,
@@ -158,9 +163,8 @@ async function scanCommandsDirectory(
         provider,
         filePath,
       });
-    } catch (error) {
+    } catch {
       // Skip files we can't read
-      console.warn(`Failed to read command file ${filePath}:`, error);
     }
   }
 
@@ -178,10 +182,8 @@ export async function scanCustomCommands(
   projectPath: string,
   providerId: ProviderId
 ): Promise<CustomSlashCommand[]> {
-  console.log('[custom-commands scan] Starting scan', { projectPath, providerId });
   const config = COMMAND_DIRECTORIES[providerId];
   if (!config) {
-    console.log('[custom-commands scan] No config found for provider:', providerId);
     return [];
   }
 
@@ -190,28 +192,24 @@ export async function scanCustomCommands(
   // Scan all project directories
   for (const projectDir of config.projectDirs) {
     const projectDirPath = path.join(projectPath, projectDir);
-    console.log('[custom-commands scan] Scanning project directory:', projectDirPath);
     const projectCommands = await scanCommandsDirectory(
       projectDirPath,
       'project',
       providerId,
       config.extension
     );
-    console.log('[custom-commands scan] Found project commands:', projectCommands.length);
     commands.push(...projectCommands);
   }
 
   // Scan all global directories
   for (const globalDir of config.globalDirs) {
     const globalDirPath = path.join(os.homedir(), globalDir);
-    console.log('[custom-commands scan] Scanning global directory:', globalDirPath);
     const globalCommands = await scanCommandsDirectory(
       globalDirPath,
       'global',
       providerId,
       config.extension
     );
-    console.log('[custom-commands scan] Found global commands:', globalCommands.length);
 
     // Filter out global commands that are overridden by project commands
     for (const globalCmd of globalCommands) {
@@ -221,7 +219,6 @@ export async function scanCustomCommands(
     }
   }
 
-  console.log('[custom-commands scan] Total unique commands:', commands.length);
   return commands;
 }
 
