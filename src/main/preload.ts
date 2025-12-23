@@ -98,6 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(channel, wrapped);
     return () => ipcRenderer.removeListener(channel, wrapped);
   },
+  scanCustomCommands: (args: { projectPath: string; providerId: string }) =>
+    ipcRenderer.invoke('custom-commands:scan', args),
 
   // App settings
   getSettings: () => ipcRenderer.invoke('settings:get'),

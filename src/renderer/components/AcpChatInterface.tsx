@@ -380,6 +380,12 @@ const AcpChatInterface: React.FC<Props> = ({
   const [commands, setCommands] = useState<
     Array<{ name: string; description?: string; hint?: string }>
   >([]);
+
+  // Debug: Log when commands change
+  useEffect(() => {
+    console.log('[custom-commands] Commands state updated:', commands.length, commands);
+  }, [commands]);
+
   const [plan, setPlan] = useState<
     Array<{ content?: string; status?: string; priority?: string }> | null
   >(null);
@@ -459,6 +465,43 @@ const AcpChatInterface: React.FC<Props> = ({
       } catch {}
     };
   }, [sessionId, uiLog]);
+
+  // Scan for custom slash commands when project or provider changes
+  useEffect(() => {
+    const loadCustomCommands = async () => {
+      console.log('[custom-commands] Scanner useEffect running', { taskPath: task.path, provider });
+      if (!task.path || !provider) {
+        console.log('[custom-commands] Early return: missing task.path or provider');
+        return;
+      }
+      uiLog('scanCustomCommands', { projectPath: task.path, provider });
+      const result = await window.electronAPI.scanCustomCommands({
+        projectPath: task.path,
+        providerId: provider,
+      });
+      console.log('[custom-commands] Full scan result:', JSON.stringify(result, null, 2));
+      uiLog('scanCustomCommands:response', result);
+      if (result.success && result.commands && result.commands.length > 0) {
+        const mappedCommands = result.commands.map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description,
+          hint: undefined,
+        }));
+        console.log('[custom-commands] Setting commands:', mappedCommands);
+        setCommands(mappedCommands);
+      } else {
+        // Always log when no commands found
+        console.log('[custom-commands] No commands found - conditions:', {
+          hasResult: !!result,
+          success: result?.success,
+          hasCommands: !!result?.commands,
+          commandsLength: result?.commands?.length,
+          commands: result?.commands,
+        });
+      }
+    };
+    loadCustomCommands();
+  }, [task.path, provider, uiLog]);
 
   useEffect(() => {
     const off = window.electronAPI.onAcpEvent((payload: any) => {
@@ -617,26 +660,10 @@ const AcpChatInterface: React.FC<Props> = ({
           });
           return;
         }
+        // We use our own custom command scanner instead of available_commands_update
+        // This ensures we only show user-created commands from .codex/prompts, etc.
         if (updateType === 'available_commands_update') {
-          const cmds = Array.isArray(update.availableCommands)
-            ? update.availableCommands
-            : Array.isArray(update.commands)
-              ? update.commands
-              : [];
-          // Filter out Codex CLI utility commands (undo, compact, init, etc.)
-          const utilityCommands = new Set(['undo', 'compact', 'init', 'reset', 'clear', 'logout']);
-          setCommands(
-            cmds
-              .filter((cmd: any) => {
-                const name = String(cmd.name || '').toLowerCase().replace(/^\//, '');
-                return !utilityCommands.has(name);
-              })
-              .map((cmd: any) => ({
-                name: String(cmd.name || '').replace(/^\//, ''),
-                description: cmd.description || cmd.summary,
-                hint: cmd.input?.hint || cmd.inputHint,
-              }))
-          );
+          // Ignore agent-provided commands - we use our scanner as the source of truth
           return;
         }
       }
@@ -943,11 +970,20 @@ const AcpChatInterface: React.FC<Props> = ({
   };
 
   const commandSuggestions = useMemo(() => {
-    if (!input.startsWith('/')) return [];
+    if (!input.startsWith('/')) {
+      return [];
+    }
     const query = input.slice(1).toLowerCase();
-    return commands
+    const suggestions = commands
       .filter((cmd) => cmd.name && cmd.name.toLowerCase().includes(query))
       .slice(0, 6);
+    console.log('[custom-commands] Command suggestions:', {
+      query,
+      commandsCount: commands.length,
+      suggestionsCount: suggestions.length,
+      suggestions,
+    });
+    return suggestions;
   }, [commands, input]);
 
   const commandHint = useMemo(() => {
@@ -1628,7 +1664,7 @@ const AcpChatInterface: React.FC<Props> = ({
         <div className="bg-transparent px-6 py-4">
           <div className="mx-auto max-w-4xl space-y-3">
             {commandSuggestions.length ? (
-              <div className="rounded-lg border border-border/60 bg-background/90 p-2 text-xs text-muted-foreground shadow-sm">
+              <div className="rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
                 {commandSuggestions.map((cmd) => (
                   <button
                     key={cmd.name}
