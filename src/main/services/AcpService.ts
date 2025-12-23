@@ -112,11 +112,11 @@ function logEnvSummary() {
   });
 }
 
-function readCodexConfigSummary(): CodexConfigSummary | null {
+async function readCodexConfigSummary(): Promise<CodexConfigSummary | null> {
   const configPath = path.join(os.homedir(), '.codex', 'config.toml');
   try {
-    if (!fs.existsSync(configPath)) return null;
-    const raw = fs.readFileSync(configPath, 'utf8');
+    const raw = await fsPromises.readFile(configPath, 'utf8').catch(() => null);
+    if (!raw) return null;
     const reasoningMatch = raw.match(/^\s*model_reasoning_effort\s*=\s*["']([^"']+)["']/m);
     const modelMatch = raw.match(/^\s*model\s*=\s*["']([^"']+)["']/m);
     const reasoning = reasoningMatch?.[1]?.trim() || null;
@@ -126,8 +126,12 @@ function readCodexConfigSummary(): CodexConfigSummary | null {
       error = `Invalid Codex config: model_reasoning_effort="${reasoning}". Use one of: minimal, low, medium, high in ~/.codex/config.toml.`;
     }
     return { path: configPath, model, reasoningEffort: reasoning, error };
-  } catch (error: any) {
-    acpWarn('codexConfig:readFailed', { error: error?.message || String(error) });
+  } catch (error: unknown) {
+    const errorMessage =
+      error && typeof error === 'object' && 'message' in error
+        ? String(error.message)
+        : String(error);
+    acpWarn('codexConfig:readFailed', { error: errorMessage });
   }
   return null;
 }
@@ -219,7 +223,7 @@ class AcpService {
     acpLog('startSession', { taskId, providerId, cwd });
     logEnvSummary();
     if (providerId === 'codex') {
-      const configSummary = readCodexConfigSummary();
+      const configSummary = await readCodexConfigSummary();
       if (configSummary) {
         acpLog('codexConfig:summary', configSummary);
         if (configSummary.error) {
