@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { app, BrowserWindow } from 'electron';
 import fs from 'fs';
+import { promises as fsPromises } from 'fs';
 import os from 'os';
 import path from 'path';
 import { log } from '../lib/logger';
@@ -655,7 +656,7 @@ class AcpService {
             line: params?.line,
             limit: params?.limit,
           });
-          const result = this.readTextFile(state, params);
+          const result = await this.readTextFile(state, params);
           this.sendResponse(state, id, result);
           return;
         }
@@ -666,7 +667,7 @@ class AcpService {
             path: params?.path,
             length: typeof params?.content === 'string' ? params.content.length : undefined,
           });
-          this.writeTextFile(state, params);
+          await this.writeTextFile(state, params);
           this.sendResponse(state, id, null);
           return;
         }
@@ -771,13 +772,13 @@ class AcpService {
     }
   }
 
-  private readTextFile(state: AcpSessionState, params: any): { content: string } {
+  private async readTextFile(state: AcpSessionState, params: any): Promise<{ content: string }> {
     const sessionId = params?.sessionId;
     if (!sessionId || sessionId !== state.sessionId) throw new Error('Invalid session');
     const filePath = params?.path;
     if (!filePath || !isAbsolutePath(filePath)) throw new Error('Invalid path');
     const abs = ensureWithinRoot(state.cwd, filePath);
-    const raw = fs.readFileSync(abs, 'utf8');
+    const raw = await fsPromises.readFile(abs, 'utf8');
     const line = typeof params?.line === 'number' ? params.line : undefined;
     const limit = typeof params?.limit === 'number' ? params.limit : undefined;
     if (!line && !limit) return { content: raw };
@@ -788,15 +789,15 @@ class AcpService {
     return { content: sliced };
   }
 
-  private writeTextFile(state: AcpSessionState, params: any) {
+  private async writeTextFile(state: AcpSessionState, params: any): Promise<void> {
     const sessionId = params?.sessionId;
     if (!sessionId || sessionId !== state.sessionId) throw new Error('Invalid session');
     const filePath = params?.path;
     if (!filePath || !isAbsolutePath(filePath)) throw new Error('Invalid path');
     const abs = ensureWithinRoot(state.cwd, filePath);
     const dir = path.dirname(abs);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(abs, String(params?.content ?? ''), 'utf8');
+    await fsPromises.mkdir(dir, { recursive: true });
+    await fsPromises.writeFile(abs, String(params?.content ?? ''), 'utf8');
   }
 
   private createTerminal(state: AcpSessionState, params: any): { terminalId: string } {
