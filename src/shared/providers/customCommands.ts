@@ -153,7 +153,8 @@ async function scanCommandsDirectory(
     const filePath = path.join(dirPath, file);
     try {
       const content = await fs.readFile(filePath, 'utf-8');
-      const name = file.endsWith(extension) ? file.slice(0, -extension.length) : file;
+      // Use path.parse().name to robustly extract filename without extension
+      const name = path.parse(file).name;
       const description = extractDescription(content, extension);
 
       commands.push({
