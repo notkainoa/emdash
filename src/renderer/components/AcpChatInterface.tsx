@@ -342,6 +342,22 @@ const getTailLines = (text: string, maxLines: number) => {
   return { lines: lines.slice(lines.length - maxLines), truncated: true };
 };
 
+// Truncate text to last N lines to prevent unbounded state growth.
+// Uses a buffer (maxLines + 10) to avoid truncating on every chunk.
+const truncateToTailLines = (text: string, maxLines: number): string => {
+  const lines = splitLines(text);
+  if (lines.length <= maxLines) {
+    return text;
+  }
+  // Add a small buffer to avoid truncating on every chunk
+  const buffer = 10;
+  const limit = maxLines + buffer;
+  if (lines.length <= limit) {
+    return text;
+  }
+  return lines.slice(lines.length - maxLines).join('\n');
+};
+
 const statusStyles: Record<string, string> = {
   pending: 'text-amber-700 bg-amber-50 border-amber-200',
   in_progress: 'text-blue-700 bg-blue-50 border-blue-200',
@@ -553,7 +569,7 @@ const AcpChatInterface: React.FC<Props> = ({
         if (!chunk) return;
         setTerminalOutputs((prev) => ({
           ...prev,
-          [terminalId]: (prev[terminalId] || '') + chunk,
+          [terminalId]: truncateToTailLines((prev[terminalId] || '') + chunk, 60),
         }));
         return;
       }
@@ -1159,6 +1175,30 @@ const AcpChatInterface: React.FC<Props> = ({
     );
   };
 
+  // Memoize diff previews to avoid re-computing Myers diff on every render
+  const diffPreviewsByToolCall = useMemo(() => {
+    const result: Record<string, DiffPreview[]> = {};
+    for (const [toolCallId, toolCall] of Object.entries(toolCalls)) {
+      const diffItems = (toolCall.content?.filter((item) => item.type === 'diff') || []) as Array<{
+        type: 'diff';
+        path?: string;
+        oldText?: string;
+        newText?: string;
+        original?: string;
+        updated?: string;
+      }>;
+      if (diffItems.length > 0) {
+        result[toolCallId] = diffItems.map((item) => {
+          const before = (item as any).oldText ?? (item as any).original ?? '';
+          const after = (item as any).newText ?? (item as any).updated ?? '';
+          const preview = buildDiffPreview(String(before ?? ''), String(after ?? ''));
+          return { ...preview, path: formatPath(item.path) } as DiffPreview;
+        });
+      }
+    }
+    return result;
+  }, [toolCalls]);
+
   const renderToolCall = (toolCallId: string) => {
     const toolCall = toolCalls[toolCallId];
     if (!toolCall) return null;
@@ -1183,12 +1223,8 @@ const AcpChatInterface: React.FC<Props> = ({
         | Array<{ type: 'content'; content: ContentBlock }>
         | undefined) || [];
 
-    const diffPreviews: DiffPreview[] = diffItems.map((item) => {
-      const before = (item as any).oldText ?? (item as any).original ?? '';
-      const after = (item as any).newText ?? (item as any).updated ?? '';
-      const preview = buildDiffPreview(String(before ?? ''), String(after ?? ''));
-      return { ...preview, path: formatPath(item.path) };
-    });
+    // Use memoized diff previews to avoid re-computing Myers diff on every render
+    const diffPreviews: DiffPreview[] = diffPreviewsByToolCall[toolCallId] || [];
 
     const diffTotals = diffPreviews.reduce(
       (acc, diff) => ({
