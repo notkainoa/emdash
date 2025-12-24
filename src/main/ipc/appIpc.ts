@@ -1,7 +1,7 @@
 import { app, ipcMain, shell } from 'electron';
 import { exec } from 'child_process';
 import { readFileSync } from 'fs';
-import { promises as fs } from 'fs';
+import { promises as fsPromises } from 'fs';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { ensureProjectPrepared } from '../services/ProjectPrep';
