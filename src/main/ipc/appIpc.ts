@@ -50,7 +50,7 @@ export function registerAppIpc() {
       try {
         if (ensureDir) {
           try {
-            const stats = await fs.stat(resolvedTarget);
+            const stats = await fsPromises.stat(resolvedTarget);
             if (!stats.isDirectory()) {
               return {
                 success: false,
