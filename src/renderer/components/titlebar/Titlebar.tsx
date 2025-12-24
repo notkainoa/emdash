@@ -6,6 +6,7 @@ import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import OpenInMenu from './OpenInMenu';
 import BrowserToggleButton from './BrowserToggleButton';
+import { isMac } from '../../lib/platform';
 
 interface TitlebarProps {
   currentPath?: string | null;
@@ -35,14 +36,15 @@ const Titlebar: React.FC<TitlebarProps> = ({
   isFullscreen = false,
 }) => {
   // macOS has traffic lights on the left that need space (unless in fullscreen)
-  const isMac = platform === 'darwin';
-  const needsTrafficLightSpace = isMac && !isFullscreen;
+  const needsTrafficLightSpace = isMac(platform) && !isFullscreen;
   const leftPadding = needsTrafficLightSpace ? 'pl-20' : 'pl-2';
 
   return (
     <header className="fixed inset-x-0 top-0 z-[80] flex h-[var(--tb,36px)] items-center bg-gray-50 shadow-[inset_0_-1px_0_hsl(var(--border))] [-webkit-app-region:drag] dark:bg-gray-900">
       {/* Left side: Sidebar toggle buttons */}
-      <div className={`pointer-events-auto flex items-center gap-1 ${leftPadding} [-webkit-app-region:no-drag]`}>
+      <div
+        className={`pointer-events-auto flex items-center gap-1 ${leftPadding} [-webkit-app-region:no-drag]`}
+      >
         <SidebarLeftToggleButton />
         <SidebarRightToggleButton />
       </div>

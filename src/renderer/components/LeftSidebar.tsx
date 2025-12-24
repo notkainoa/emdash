@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import ReorderList from './ReorderList';
 import { Button } from './ui/button';
+import { log } from '../lib/logger';
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +15,15 @@ import {
   useSidebar,
 } from './ui/sidebar';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
-import { Home, ChevronDown, Plus, FolderOpen, MessageSquare, Settings as SettingsIcon, Command } from 'lucide-react';
+import {
+  Home,
+  ChevronDown,
+  Plus,
+  FolderOpen,
+  MessageSquare,
+  Settings as SettingsIcon,
+  Command,
+} from 'lucide-react';
 import ActiveRuns from './ActiveRuns';
 import SidebarEmptyState from './SidebarEmptyState';
 import GithubStatus from './GithubStatus';
@@ -38,7 +47,13 @@ interface LeftSidebarProps {
   onReorderProjectsFull?: (newOrder: Project[]) => void;
   githubInstalled?: boolean;
   githubAuthenticated?: boolean;
-  githubUser?: { login?: string; name?: string; avatar_url?: string; html_url?: string; email?: string } | null;
+  githubUser?: {
+    login?: string;
+    name?: string;
+    avatar_url?: string;
+    html_url?: string;
+    email?: string;
+  } | null;
   onGithubConnect?: () => void;
   githubLoading?: boolean;
   githubStatusMessage?: string;
@@ -55,6 +70,9 @@ interface LeftSidebarProps {
   isHomeView?: boolean;
   onToggleSettings?: () => void;
   isSettingsOpen?: boolean;
+  isFeedbackOpen?: boolean;
+  onOpenFeedback?: () => void;
+  onCloseFeedback?: () => void;
 }
 
 const LeftSidebar: React.FC<LeftSidebarProps> = ({
@@ -83,6 +101,9 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   isHomeView,
   onToggleSettings,
   isSettingsOpen = false,
+  isFeedbackOpen = false,
+  onOpenFeedback,
+  onCloseFeedback,
 }) => {
   const { open, isMobile, setOpen } = useSidebar();
   const [deletingProjectId, setDeletingProjectId] = React.useState<string | null>(null);
@@ -122,60 +143,26 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
     onSidebarContextChange?.({ open, isMobile, setOpen });
   }, [open, isMobile, setOpen, onSidebarContextChange]);
 
-  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const feedbackButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  const handleOpenFeedback = useCallback(async () => {
-    void import('../lib/telemetryClient').then(({ captureTelemetry }) => {
-      captureTelemetry('toolbar_feedback_clicked');
-    });
-    setIsFeedbackOpen(true);
-  }, []);
-
-  const handleCloseFeedback = useCallback(() => {
-    setIsFeedbackOpen(false);
-    feedbackButtonRef.current?.blur();
-  }, []);
 
   // Broadcast overlay state so the preview pane can hide while feedback is open
   useEffect(() => {
     try {
       const open = Boolean(isFeedbackOpen);
       window.dispatchEvent(new CustomEvent('emdash:overlay:changed', { detail: { open } }));
-    } catch {}
+    } catch (error) {
+      log.error('Failed to broadcast overlay state change', error);
+    }
   }, [isFeedbackOpen]);
 
-  useEffect(() => {
-    const handleGlobalShortcut = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
-        return;
-      }
+  const handleFeedbackButtonClick = useCallback(() => {
+    onOpenFeedback?.();
+  }, [onOpenFeedback]);
 
-      const target = event.target as HTMLElement | null;
-      if (target) {
-        const tagName = target.tagName;
-        const isEditable =
-          target.getAttribute('contenteditable') === 'true' ||
-          tagName === 'INPUT' ||
-          tagName === 'TEXTAREA' ||
-          tagName === 'SELECT';
-        if (isEditable) {
-          return;
-        }
-      }
-
-      const isMeta = event.metaKey || event.ctrlKey;
-      if (isMeta && event.shiftKey && event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        handleOpenFeedback();
-      }
-    };
-
-    window.addEventListener('keydown', handleGlobalShortcut);
-    return () => {
-      window.removeEventListener('keydown', handleGlobalShortcut);
-    };
-  }, [handleOpenFeedback]);
+  const handleFeedbackClose = useCallback(() => {
+    onCloseFeedback?.();
+    feedbackButtonRef.current?.blur();
+  }, [onCloseFeedback]);
 
   const renderGithubStatus = () => (
     <GithubStatus
@@ -443,7 +430,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                       variant="ghost"
                       size="icon"
                       aria-label="Open feedback"
-                      onClick={handleOpenFeedback}
+                      onClick={handleFeedbackButtonClick}
                       ref={feedbackButtonRef}
                       className="h-8 w-8 text-muted-foreground hover:bg-background/80"
                     >
@@ -501,7 +488,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       </Sidebar>
       <FeedbackModal
         isOpen={isFeedbackOpen}
-        onClose={handleCloseFeedback}
+        onClose={handleFeedbackClose}
         githubUser={githubUser}
       />
     </div>
