@@ -62,7 +62,7 @@ export function registerAppIpc() {
               error instanceof Error &&
               (error as ErrnoException).code === 'ENOENT'
             ) {
-              await fs.mkdir(resolvedTarget, { recursive: true });
+              await fsPromises.mkdir(resolvedTarget, { recursive: true });
             } else {
               throw error;
             }
