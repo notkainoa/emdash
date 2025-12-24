@@ -22,7 +22,7 @@ const AcpCommandsSettingsCard: React.FC = () => {
               <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-xs">~/.codex/prompts</code>
             </div>
           </div>
-          <OpenInMenu path={GLOBAL_COMMANDS_PATH} ensureDir />
+          <OpenInMenu path={GLOBAL_COMMANDS_PATH} ensureDir={true} />
         </div>
 
         {/* Project commands */}

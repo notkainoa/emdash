@@ -25,7 +25,7 @@ const menuItemBase =
 const OpenInMenu: React.FC<OpenInMenuProps> = ({
   path,
   align = 'right',
-  ensureDir = true,
+  ensureDir = false,
 }) => {
   const [open, setOpen] = React.useState(false);
   const [menuStyle, setMenuStyle] = React.useState<{

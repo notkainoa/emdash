@@ -71,6 +71,11 @@ export function registerAppIpc() {
 
         const platform = process.platform;
         const quoted = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
+        const windowsQuote = (p: string): string => {
+          // For cmd.exe, wrap in double quotes and escape internal quotes by doubling
+          const escaped = p.replace(/"/g, '""');
+          return `"${escaped}"`;
+        };
 
         if (which === 'warp') {
           const urls = [
@@ -137,16 +142,16 @@ export function registerAppIpc() {
         } else if (platform === 'win32') {
           switch (which) {
             case 'finder':
-              command = `explorer ${quoted(resolvedTarget)}`;
+              command = `explorer ${windowsQuote(resolvedTarget)}`;
               break;
             case 'cursor':
-              command = `start "" cursor ${quoted(resolvedTarget)}`;
+              command = `start "" cursor ${windowsQuote(resolvedTarget)}`;
               break;
             case 'vscode':
-              command = `start "" code ${quoted(resolvedTarget)} || start "" code-insiders ${quoted(resolvedTarget)}`;
+              command = `start "" code ${windowsQuote(resolvedTarget)} || start "" code-insiders ${windowsQuote(resolvedTarget)}`;
               break;
             case 'terminal':
-              command = `wt -d ${quoted(resolvedTarget)} || start cmd /K "cd /d ${resolvedTarget}"`;
+              command = `wt -d ${windowsQuote(resolvedTarget)} || start "" cmd /K "cd /d ${windowsQuote(resolvedTarget)}"`;
               break;
             case 'ghostty':
             case 'zed':
