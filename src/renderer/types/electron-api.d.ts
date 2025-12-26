@@ -270,6 +270,22 @@ declare global {
         description?: string;
         error?: string;
       }>;
+      getPrCapabilities: (args: { taskPath: string }) => Promise<{
+        success: boolean;
+        canPushToBase?: boolean;
+        viewerPermission?: string;
+        nameWithOwner?: string;
+        baseRepo?: string;
+        parentRepo?: string | null;
+        isFork?: boolean;
+        viewerLogin?: string;
+        defaultBranch?: string;
+        hasFork?: boolean;
+        allowForking?: boolean;
+        error?: string;
+        output?: string;
+        code?: string;
+      }>;
       createPullRequest: (args: {
         taskPath: string;
         title?: string;
@@ -284,6 +300,26 @@ declare global {
         url?: string;
         output?: string;
         error?: string;
+      }>;
+      createPullRequestFromFork: (args: {
+        taskPath: string;
+        commitMessage?: string;
+        createBranchIfOnDefault?: boolean;
+        branchPrefix?: string;
+        title?: string;
+        body?: string;
+        base?: string;
+        draft?: boolean;
+        web?: boolean;
+        fill?: boolean;
+      }) => Promise<{
+        success: boolean;
+        url?: string;
+        output?: string;
+        error?: string;
+        fork?: string;
+        baseRepo?: string;
+        code?: string;
       }>;
       getPrStatus: (args: { taskPath: string }) => Promise<{
         success: boolean;
@@ -748,6 +784,22 @@ export interface ElectronAPI {
     branches?: Array<{ ref: string; remote: string; branch: string; label: string }>;
     error?: string;
   }>;
+  getPrCapabilities: (args: { taskPath: string }) => Promise<{
+    success: boolean;
+    canPushToBase?: boolean;
+    viewerPermission?: string;
+    nameWithOwner?: string;
+    baseRepo?: string;
+    parentRepo?: string | null;
+    isFork?: boolean;
+    viewerLogin?: string;
+    defaultBranch?: string;
+    hasFork?: boolean;
+    allowForking?: boolean;
+    error?: string;
+    output?: string;
+    code?: string;
+  }>;
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -762,6 +814,26 @@ export interface ElectronAPI {
     url?: string;
     output?: string;
     error?: string;
+  }>;
+  createPullRequestFromFork: (args: {
+    taskPath: string;
+    commitMessage?: string;
+    createBranchIfOnDefault?: boolean;
+    branchPrefix?: string;
+    title?: string;
+    body?: string;
+    base?: string;
+    draft?: boolean;
+    web?: boolean;
+    fill?: boolean;
+  }) => Promise<{
+    success: boolean;
+    url?: string;
+    output?: string;
+    error?: string;
+    fork?: string;
+    baseRepo?: string;
+    code?: string;
   }>;
   connectToGitHub: (projectPath: string) => Promise<{
     success: boolean;

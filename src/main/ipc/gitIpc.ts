@@ -17,6 +17,105 @@ import { databaseService } from '../services/DatabaseService';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
+const EMDASH_GITHUB_KEYTAR_SERVICE = 'emdash-github';
+const EMDASH_GITHUB_KEYTAR_ACCOUNT = 'github-token';
+
+async function getEmdashGitHubToken(): Promise<string | null> {
+  try {
+    const keytar = await import('keytar');
+    return await keytar.getPassword(EMDASH_GITHUB_KEYTAR_SERVICE, EMDASH_GITHUB_KEYTAR_ACCOUNT);
+  } catch {
+    return null;
+  }
+}
+
+function buildGhEnv(token?: string | null): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GH_PROMPT_DISABLED: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'Never',
+  };
+  if (token) env.GH_TOKEN = token;
+  return env;
+}
+
+function normalizeGhError(error: any): { userMessage: string; technical: string; code?: string } {
+  const errMsg = typeof error?.message === 'string' ? error.message : String(error);
+  const errStdout = typeof error?.stdout === 'string' ? error.stdout : '';
+  const errStderr = typeof error?.stderr === 'string' ? error.stderr : '';
+  const technical = [errMsg, errStdout, errStderr].filter(Boolean).join('\n').trim();
+  const lower = technical.toLowerCase();
+
+  if (error?.code === 'ENOENT') {
+    return {
+      userMessage:
+        'GitHub CLI (gh) is not installed. Install it or enable GitHub features in Emdash.',
+      technical,
+      code: 'GH_NOT_INSTALLED',
+    };
+  }
+
+  const restrictionRe =
+    /Auth App access restrictions|authorized OAuth apps|third-parties is limited/i;
+  if (restrictionRe.test(technical)) {
+    return {
+      userMessage: technical || 'GitHub organization restrictions blocked the GitHub CLI.',
+      technical,
+      code: 'ORG_AUTH_APP_RESTRICTED',
+    };
+  }
+
+  if (lower.includes('not authenticated') || lower.includes('you are not logged into')) {
+    return {
+      userMessage: 'GitHub is not connected. Connect GitHub in Emdash and try again.',
+      technical,
+      code: 'GITHUB_NOT_CONNECTED',
+    };
+  }
+
+  if (
+    lower.includes('saml') ||
+    lower.includes('sso') ||
+    lower.includes('organization has enabled or enforced saml sso')
+  ) {
+    return {
+      userMessage:
+        'Your organization requires SSO authorization for GitHub. Authorize access in your browser, then try again.',
+      technical,
+      code: 'GITHUB_SSO_REQUIRED',
+    };
+  }
+
+  if (
+    lower.includes('failed to connect') ||
+    lower.includes('could not resolve host') ||
+    lower.includes('network') ||
+    lower.includes('connection') ||
+    lower.includes('timed out')
+  ) {
+    return {
+      userMessage: 'Unable to reach GitHub. Check your internet connection and try again.',
+      technical,
+      code: 'GITHUB_NETWORK_ERROR',
+    };
+  }
+
+  if (
+    lower.includes('forking is disabled') ||
+    (lower.includes('fork') && lower.includes('disabled'))
+  ) {
+    return {
+      userMessage:
+        'Forking is disabled for this repository. Ask a maintainer to enable forking or grant you write access.',
+      technical,
+      code: 'FORKING_DISABLED',
+    };
+  }
+
+  return { userMessage: technical || errMsg || 'GitHub command failed', technical };
+}
+
 export function registerGitIpc() {
   function resolveGitBin(): string {
     // Allow override via env
@@ -117,6 +216,113 @@ export function registerGitIpc() {
       }
     }
   );
+
+  ipcMain.handle('git:get-pr-capabilities', async (_, args: { taskPath: string }) => {
+    const { taskPath } = args || ({} as { taskPath: string });
+    if (!taskPath) return { success: false, error: 'taskPath is required' };
+
+    try {
+      await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+    } catch {
+      return { success: false, error: 'Not a git repository' };
+    }
+
+    const token = await getEmdashGitHubToken();
+    if (!token) {
+      return {
+        success: false,
+        error: 'GitHub is not connected in Emdash. Connect GitHub and try again.',
+        code: 'GITHUB_NOT_CONNECTED',
+      };
+    }
+
+    const env = buildGhEnv(token);
+
+    try {
+      const { stdout: viewerOut } = await execFileAsync('gh', ['api', 'user', '-q', '.login'], {
+        cwd: taskPath,
+        env,
+      });
+      const viewerLogin = (viewerOut || '').trim();
+
+      const { stdout: repoOut } = await execFileAsync(
+        'gh',
+        ['repo', 'view', '--json', 'nameWithOwner,isFork,parent,defaultBranchRef'],
+        { cwd: taskPath, env }
+      );
+      const repo = JSON.parse(repoOut || '{}');
+      const nameWithOwner = repo?.nameWithOwner || '';
+      const isFork = !!repo?.isFork;
+      const parentRepo =
+        repo?.parent && typeof repo.parent.nameWithOwner === 'string'
+          ? repo.parent.nameWithOwner
+          : null;
+      const baseRepo = parentRepo || nameWithOwner || '';
+      const defaultBranch =
+        repo?.defaultBranchRef?.name && typeof repo.defaultBranchRef.name === 'string'
+          ? repo.defaultBranchRef.name
+          : 'main';
+
+      if (!baseRepo || !viewerLogin) {
+        return { success: false, error: 'Unable to resolve GitHub repository or user.' };
+      }
+
+      // Permission on the base repo (upstream if this repo is a fork)
+      const { stdout: permOut } = await execFileAsync(
+        'gh',
+        ['repo', 'view', baseRepo, '--json', 'viewerPermission', '-q', '.viewerPermission'],
+        { cwd: taskPath, env }
+      );
+      const viewerPermission = String(permOut || '')
+        .trim()
+        .toUpperCase();
+      const canPushToBase = ['WRITE', 'MAINTAIN', 'ADMIN'].includes(viewerPermission);
+
+      const repoName = baseRepo.split('/').pop() || baseRepo;
+      const forkFullName = `${viewerLogin}/${repoName}`;
+
+      let hasFork = false;
+      try {
+        await execFileAsync('gh', ['repo', 'view', forkFullName], { cwd: taskPath, env });
+        hasFork = true;
+      } catch {
+        hasFork = false;
+      }
+
+      let allowForking: boolean | undefined = undefined;
+      if (!canPushToBase) {
+        try {
+          const { stdout: allowOut } = await execFileAsync(
+            'gh',
+            ['api', `repos/${baseRepo}`, '-q', '.allow_forking'],
+            { cwd: taskPath, env }
+          );
+          const val = (allowOut || '').trim();
+          if (val === 'true') allowForking = true;
+          if (val === 'false') allowForking = false;
+        } catch {
+          // Best-effort only
+        }
+      }
+
+      return {
+        success: true,
+        canPushToBase,
+        viewerPermission,
+        nameWithOwner,
+        baseRepo,
+        parentRepo,
+        isFork,
+        viewerLogin,
+        defaultBranch,
+        hasFork,
+        allowForking,
+      };
+    } catch (error: any) {
+      const norm = normalizeGhError(error);
+      return { success: false, error: norm.userMessage, output: norm.technical, code: norm.code };
+    }
+  });
 
   // Git: Create Pull Request via GitHub CLI
   ipcMain.handle(
@@ -366,6 +572,334 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
           output: combined,
           code,
         } as any;
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'git:create-pr-from-fork',
+    async (
+      _,
+      args: {
+        taskPath: string;
+        commitMessage?: string;
+        createBranchIfOnDefault?: boolean;
+        branchPrefix?: string;
+        title?: string;
+        body?: string;
+        base?: string;
+        draft?: boolean;
+        web?: boolean;
+        fill?: boolean;
+      }
+    ) => {
+      const {
+        taskPath,
+        commitMessage = 'chore: apply task changes',
+        createBranchIfOnDefault = true,
+        branchPrefix = 'orch',
+        title,
+        body,
+        base,
+        draft,
+        web,
+        fill,
+      } = args ||
+      ({} as {
+        taskPath: string;
+        commitMessage?: string;
+        createBranchIfOnDefault?: boolean;
+        branchPrefix?: string;
+        title?: string;
+        body?: string;
+        base?: string;
+        draft?: boolean;
+        web?: boolean;
+        fill?: boolean;
+      });
+
+      if (!taskPath) return { success: false, error: 'taskPath is required' };
+
+      const outputs: string[] = [];
+
+      try {
+        await execAsync('git rev-parse --is-inside-work-tree', { cwd: taskPath });
+      } catch {
+        return { success: false, error: 'Not a git repository' };
+      }
+
+      const token = await getEmdashGitHubToken();
+      if (!token) {
+        return {
+          success: false,
+          error: 'GitHub is not connected in Emdash. Connect GitHub and try again.',
+          code: 'GITHUB_NOT_CONNECTED',
+        };
+      }
+      const env = buildGhEnv(token);
+
+      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      try {
+        // Viewer + repo metadata
+        const { stdout: viewerOut } = await execFileAsync('gh', ['api', 'user', '-q', '.login'], {
+          cwd: taskPath,
+          env,
+        });
+        const viewerLogin = (viewerOut || '').trim();
+        if (!viewerLogin) {
+          return { success: false, error: 'Unable to determine GitHub user. Reconnect GitHub.' };
+        }
+
+        const { stdout: repoOut } = await execFileAsync(
+          'gh',
+          ['repo', 'view', '--json', 'nameWithOwner,isFork,parent,defaultBranchRef'],
+          { cwd: taskPath, env }
+        );
+        const repoInfo = JSON.parse(repoOut || '{}');
+        const nameWithOwner = repoInfo?.nameWithOwner || '';
+        const parentRepo =
+          repoInfo?.parent && typeof repoInfo.parent.nameWithOwner === 'string'
+            ? repoInfo.parent.nameWithOwner
+            : null;
+        const baseRepo = parentRepo || nameWithOwner;
+        const defaultBranch =
+          base ||
+          (repoInfo?.defaultBranchRef?.name && typeof repoInfo.defaultBranchRef.name === 'string'
+            ? repoInfo.defaultBranchRef.name
+            : 'main');
+
+        if (!baseRepo) return { success: false, error: 'Unable to resolve upstream repository.' };
+
+        const repoName = baseRepo.split('/').pop() || baseRepo;
+        const forkFullName = `${viewerLogin}/${repoName}`;
+        const remoteName = 'emdash-fork';
+
+        // Preflight: if forking is disabled, fail early with a clear message.
+        try {
+          const { stdout: allowOut } = await execFileAsync(
+            'gh',
+            ['api', `repos/${baseRepo}`, '-q', '.allow_forking'],
+            { cwd: taskPath, env }
+          );
+          if ((allowOut || '').trim() === 'false') {
+            return {
+              success: false,
+              error:
+                'Forking is disabled for this repository. Ask a maintainer to enable forking or grant you write access.',
+              code: 'FORKING_DISABLED',
+            };
+          }
+        } catch {
+          // Best-effort only; continue.
+        }
+
+        // Preflight: don't overwrite any existing remote that isn't our fork.
+        try {
+          const { stdout: urlOut } = await execAsync(`git remote get-url ${remoteName}`, {
+            cwd: taskPath,
+          });
+          const existingUrl = (urlOut || '').trim().replace(/\.git$/i, '');
+          const expectA = `github.com/${viewerLogin}/${repoName}`;
+          const expectB = `github.com:${viewerLogin}/${repoName}`;
+          if (!existingUrl.includes(expectA) && !existingUrl.includes(expectB)) {
+            return {
+              success: false,
+              error: `This repository already has a remote named "${remoteName}" pointing somewhere else. Rename or remove it, then try again.`,
+            };
+          }
+        } catch {
+          // Remote doesn't exist; that's fine.
+        }
+
+        // Determine current branch
+        let currentBranch = '';
+        try {
+          const { stdout } = await execAsync('git branch --show-current', { cwd: taskPath });
+          currentBranch = (stdout || '').trim();
+        } catch {}
+
+        // Create feature branch if on default
+        if (createBranchIfOnDefault && (!currentBranch || currentBranch === defaultBranch)) {
+          const short = Date.now().toString(36);
+          const name = `${branchPrefix}/${short}`;
+          await execAsync(`git checkout -b ${JSON.stringify(name)}`, { cwd: taskPath });
+          currentBranch = name;
+        }
+
+        // Stage and commit pending changes (Create PR intends "all changes")
+        try {
+          const { stdout: statusOut } = await execAsync(
+            'git status --porcelain --untracked-files=all',
+            { cwd: taskPath }
+          );
+          if (statusOut && statusOut.trim().length > 0) {
+            await execAsync('git add -A', { cwd: taskPath });
+            try {
+              await execAsync(`git commit -m ${JSON.stringify(commitMessage)}`, { cwd: taskPath });
+            } catch (commitErr) {
+              const msg = String(commitErr);
+              if (!/nothing to commit/i.test(msg)) throw commitErr;
+            }
+          }
+        } catch (stageErr) {
+          log.warn('Stage/commit step issue:', stageErr as string);
+        }
+
+        // Ensure fork exists + remote is configured (GH handles "already exists" cases)
+        outputs.push('Preparing your fork...');
+        try {
+          await execFileAsync(
+            'gh',
+            [
+              'repo',
+              'fork',
+              baseRepo,
+              '--default-branch-only',
+              '--remote',
+              '--remote-name',
+              remoteName,
+            ],
+            { cwd: taskPath, env }
+          );
+        } catch (forkErr: any) {
+          const norm = normalizeGhError(forkErr);
+          const lower = norm.technical.toLowerCase();
+          const alreadyExists =
+            lower.includes('already exists') ||
+            lower.includes('fork already exists') ||
+            lower.includes('has already been forked');
+          if (!alreadyExists) {
+            return {
+              success: false,
+              error: norm.userMessage,
+              output: [...outputs, norm.technical].filter(Boolean).join('\n'),
+              code: norm.code,
+            };
+          }
+        }
+
+        // If gh didn't add the remote (or gh couldn't), add it ourselves as a fallback.
+        try {
+          await execAsync(`git remote get-url ${remoteName}`, { cwd: taskPath });
+        } catch {
+          // Determine protocol preference from origin
+          let preferSsh = true;
+          try {
+            const { stdout: originUrlOut } = await execAsync('git remote get-url origin', {
+              cwd: taskPath,
+            });
+            const originUrl = (originUrlOut || '').trim();
+            preferSsh = originUrl.startsWith('git@') || originUrl.startsWith('ssh://');
+          } catch {}
+
+          const queries = preferSsh ? ['.ssh_url', '.clone_url'] : ['.clone_url', '.ssh_url'];
+          let forkRemoteUrl = '';
+          for (const q of queries) {
+            try {
+              const { stdout: urlOut } = await execFileAsync(
+                'gh',
+                ['api', `repos/${forkFullName}`, '-q', q],
+                { cwd: taskPath, env }
+              );
+              const url = (urlOut || '').trim();
+              if (url) {
+                forkRemoteUrl = url;
+                break;
+              }
+            } catch {
+              // keep trying
+            }
+          }
+
+          if (!forkRemoteUrl) {
+            return {
+              success: false,
+              error: 'Your fork exists but is not ready yet. Please wait a moment and try again.',
+            };
+          }
+
+          await execAsync(`git remote add ${remoteName} ${JSON.stringify(forkRemoteUrl)}`, {
+            cwd: taskPath,
+          });
+        }
+
+        // Push branch to fork (retry briefly in case GitHub is still warming up the fork)
+        const pushCommand = `git push --set-upstream ${remoteName} ${JSON.stringify(currentBranch)}`;
+        outputs.push('Pushing branch to your fork...');
+        for (let attempt = 0; attempt < 6; attempt++) {
+          try {
+            await execAsync(pushCommand, { cwd: taskPath });
+            outputs.push(`git push: success (${remoteName}/${currentBranch})`);
+            break;
+          } catch (pushErr: any) {
+            const details =
+              typeof pushErr?.message === 'string' ? pushErr.message : String(pushErr);
+            const lower = details.toLowerCase();
+            const likelyProvisioning =
+              lower.includes('repository not found') ||
+              lower.includes('not found') ||
+              lower.includes('404');
+
+            if (likelyProvisioning && attempt < 5) {
+              await sleep(1000 + attempt * 800);
+              continue;
+            }
+
+            let userMessage =
+              'Failed to push your branch to the fork. Check your Git credentials and try again.';
+            if (details.toLowerCase().includes('permission denied') || details.includes('403')) {
+              userMessage =
+                'Permission denied pushing to your fork. Make sure Git is authenticated for your GitHub account.';
+            } else if (
+              lower.includes('could not resolve host') ||
+              lower.includes('failed to connect')
+            ) {
+              userMessage =
+                'Unable to reach GitHub to push your branch. Check your internet connection.';
+            }
+
+            return {
+              success: false,
+              error: userMessage,
+              output: [...outputs, details].filter(Boolean).join('\n'),
+              technicalError: details,
+            };
+          }
+        }
+
+        // Create PR (base repo is upstream, head is fork:userBranch)
+        const prArgs: string[] = [
+          'pr',
+          'create',
+          '--repo',
+          baseRepo,
+          '--head',
+          `${viewerLogin}:${currentBranch}`,
+        ];
+        if (defaultBranch) prArgs.push('--base', defaultBranch);
+        if (title) prArgs.push('--title', title);
+        if (body) prArgs.push('--body', body);
+        if (draft) prArgs.push('--draft');
+        if (web) prArgs.push('--web');
+        if (fill) prArgs.push('--fill');
+
+        const { stdout, stderr } = await execFileAsync('gh', prArgs, { cwd: taskPath, env });
+        const out = [...outputs, (stdout || '').trim() || (stderr || '').trim()]
+          .filter(Boolean)
+          .join('\n');
+        const urlMatch = out.match(/https?:\/\/\S+/);
+        const url = urlMatch ? urlMatch[0] : null;
+
+        return { success: true, url, output: out, fork: forkFullName, baseRepo };
+      } catch (error: any) {
+        const norm = normalizeGhError(error);
+        return {
+          success: false,
+          error: norm.userMessage,
+          output: [...outputs, norm.technical].filter(Boolean).join('\n'),
+          code: norm.code,
+        };
       }
     }
   );

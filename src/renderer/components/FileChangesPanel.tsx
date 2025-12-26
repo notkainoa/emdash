@@ -2,6 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Spinner } from './ui/spinner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 import { useToast } from '../hooks/use-toast';
 import { useCreatePR } from '../hooks/useCreatePR';
 import ChangesDiffModal from './ChangesDiffModal';
@@ -11,6 +21,23 @@ import { usePrStatus } from '../hooks/usePrStatus';
 import FileTypeIcon from './ui/file-type-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
+
+type PrCapabilities = {
+  success: boolean;
+  canPushToBase?: boolean;
+  viewerPermission?: string;
+  nameWithOwner?: string;
+  baseRepo?: string;
+  parentRepo?: string | null;
+  isFork?: boolean;
+  viewerLogin?: string;
+  defaultBranch?: string;
+  hasFork?: boolean;
+  allowForking?: boolean;
+  error?: string;
+  output?: string;
+  code?: string;
+};
 
 interface FileChangesPanelProps {
   taskId: string;
@@ -33,6 +60,11 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
   const { pr, refresh: refreshPr } = usePrStatus(taskId);
   const [branchAhead, setBranchAhead] = useState<number | null>(null);
   const [branchStatusLoading, setBranchStatusLoading] = useState<boolean>(false);
+  const [prCapabilities, setPrCapabilities] = useState<PrCapabilities | null>(null);
+  const [showForkDialog, setShowForkDialog] = useState(false);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(false);
+  const [isCreatingForkPR, setIsCreatingForkPR] = useState(false);
+  const isPrBusy = isCreatingPR || isCheckingAccess || isCreatingForkPR;
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +91,90 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, hasChanges]);
+
+  const handleCreatePrSuccess = async () => {
+    await refreshChanges();
+    try {
+      await refreshPr();
+    } catch {
+      // ignore refresh errors
+    }
+  };
+
+  const handleCreatePrClick = async () => {
+    setIsCheckingAccess(true);
+    try {
+      const api: any = (window as any).electronAPI;
+      if (!api?.getPrCapabilities) {
+        // Older builds: fall back to direct behavior (will show errors if push is blocked).
+        await createPR({ taskPath: taskId, onSuccess: handleCreatePrSuccess });
+        return;
+      }
+
+      const caps = (await api.getPrCapabilities({ taskPath: taskId })) as PrCapabilities;
+      if (!caps?.success) {
+        toast({
+          title: 'PR Check Failed',
+          description: caps?.error || 'Unable to check repository access.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (caps.allowForking === false && !caps.canPushToBase) {
+        toast({
+          title: 'Cannot Create PR',
+          description:
+            'Forking is disabled for this repository and you do not have write access. Ask a maintainer to enable forking or grant you write access.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (caps.canPushToBase) {
+        await createPR({ taskPath: taskId, onSuccess: handleCreatePrSuccess });
+      } else {
+        setPrCapabilities(caps);
+        setShowForkDialog(true);
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Unable to check repository access.';
+      toast({ title: 'PR Check Failed', description: message, variant: 'destructive' });
+    } finally {
+      setIsCheckingAccess(false);
+    }
+  };
+
+  const handleConfirmForkPr = async () => {
+    setIsCreatingForkPR(true);
+    try {
+      const res = await createPR({
+        taskPath: taskId,
+        strategy: 'fork',
+        onSuccess: handleCreatePrSuccess,
+      });
+
+      if (res?.success) {
+        setShowForkDialog(false);
+        setPrCapabilities(null);
+      } else {
+        toast({
+          title: 'Fork PR Failed',
+          description: res?.error || 'Unable to create a pull request from your fork.',
+          variant: 'destructive',
+        });
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Unable to create a pull request from your fork.';
+      toast({
+        title: 'Fork PR Failed',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreatingForkPR(false);
+    }
+  };
 
   const handleStageFile = async (filePath: string, event: React.MouseEvent) => {
     event.stopPropagation(); // Prevent opening diff modal
@@ -261,25 +377,17 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                   variant="outline"
                   size="sm"
                   className="h-8 shrink-0 border-gray-200 px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
-                  disabled={isCreatingPR}
+                  disabled={isPrBusy}
                   title="Commit all changes and create a pull request"
                   onClick={async () => {
                     void (async () => {
                       const { captureTelemetry } = await import('../lib/telemetryClient');
                       captureTelemetry('pr_viewed');
                     })();
-                    await createPR({
-                      taskPath: taskId,
-                      onSuccess: async () => {
-                        await refreshChanges();
-                        try {
-                          await refreshPr();
-                        } catch {}
-                      },
-                    });
+                    await handleCreatePrClick();
                   }}
                 >
-                  {isCreatingPR ? <Spinner size="sm" /> : 'Create PR'}
+                  {isPrBusy ? <Spinner size="sm" /> : 'Create PR'}
                 </Button>
               </div>
             </div>
@@ -339,25 +447,17 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
                   variant="outline"
                   size="sm"
                   className="h-8 border-gray-200 px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
-                  disabled={isCreatingPR || branchStatusLoading}
+                  disabled={isPrBusy || branchStatusLoading}
                   title="Create a pull request for the current branch"
                   onClick={async () => {
                     void (async () => {
                       const { captureTelemetry } = await import('../lib/telemetryClient');
                       captureTelemetry('pr_viewed');
                     })();
-                    await createPR({
-                      taskPath: taskId,
-                      onSuccess: async () => {
-                        await refreshChanges();
-                        try {
-                          await refreshPr();
-                        } catch {}
-                      },
-                    });
+                    await handleCreatePrClick();
                   }}
                 >
-                  {isCreatingPR || branchStatusLoading ? <Spinner size="sm" /> : 'Create PR'}
+                  {isPrBusy || branchStatusLoading ? <Spinner size="sm" /> : 'Create PR'}
                 </Button>
               ) : (
                 <span className="text-xs text-gray-500">No PR for this branch</span>
@@ -503,6 +603,49 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
           onRefreshChanges={refreshChanges}
         />
       )}
+      <AlertDialog open={showForkDialog} onOpenChange={setShowForkDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use your fork to open the PR?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {prCapabilities?.baseRepo
+                ? `You don't have write access to ${prCapabilities.baseRepo}. We'll push your branch to your fork and open the PR from there.`
+                : "You don't have write access to this repository. We'll push your branch to your fork and open the PR from there."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="text-sm text-gray-700 dark:text-gray-200">
+            <div>
+              GitHub account:{' '}
+              <span className="font-medium">
+                {prCapabilities?.viewerLogin ? prCapabilities.viewerLogin : 'unknown'}
+              </span>
+            </div>
+            <div>
+              Fork:{' '}
+              <span className="font-medium">
+                {prCapabilities?.viewerLogin
+                  ? `${prCapabilities.viewerLogin}/${(prCapabilities?.baseRepo || '').split('/').pop() || 'repo'}`
+                  : (prCapabilities?.baseRepo || '').split('/').pop() || 'repo'}
+              </span>
+              {prCapabilities?.hasFork ? ' (already exists)' : ' (will be created)'}
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCreatingForkPR}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isCreatingForkPR}
+              onClick={() => {
+                void handleConfirmForkPr();
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                {isCreatingForkPR ? <Spinner size="sm" /> : null}
+                {prCapabilities?.hasFork ? 'Use my fork' : 'Create fork & open PR'}
+              </span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
