@@ -19,6 +19,8 @@ import {
   Terminal,
   Trash2,
 } from 'lucide-react';
+import { useFileMentions } from '../hooks/useFileMentions';
+import FileMentionDropdown from './FileMentionDropdown';
 import { Task } from '../types/chat';
 import { type Provider } from '../types';
 import InstallBanner from './InstallBanner';
@@ -770,8 +772,56 @@ const AcpChatInterface: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // Track cursor position for mention detection
+  const [cursorPosition, setCursorPosition] = useState(0);
+
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
+  }, []);
+
+  // File mention autocomplete
+  const handleMentionSelect = useCallback(
+    (filePath: string, startIndex: number, endIndex: number) => {
+      // Insert the mention at the cursor position
+      const before = input.slice(0, startIndex);
+      const after = input.slice(endIndex);
+      const mention = `@${filePath}`;
+      setInput(before + mention + ' ' + after);
+
+      // Move cursor to after the inserted mention
+      setTimeout(() => {
+        const newCursorPos = startIndex + mention.length + 1;
+        textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+        setCursorPosition(newCursorPos);
+        textareaRef.current?.focus();
+      }, 0);
+    },
+    [input]
+  );
+
+  const fileMentions = useFileMentions({
+    input,
+    cursorPosition,
+    rootPath: task.path,
+    onSelect: handleMentionSelect,
+  });
+
+  // Handle dropdown item selection
+  const handleMentionDropdownSelect = useCallback(
+    (index: number) => {
+      fileMentions.selectItem(index);
+    },
+    [fileMentions]
+  );
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      // Dropdown closes automatically when trigger becomes inactive
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
   const toggleExpanded = useCallback((id: string) => {
@@ -2499,6 +2549,15 @@ const AcpChatInterface: React.FC<Props> = ({
                 ))}
               </div>
             ) : null}
+            {fileMentions.active && (
+              <FileMentionDropdown
+                items={fileMentions.items}
+                query={fileMentions.query}
+                selectedIndex={fileMentions.selectedIndex}
+                onSelect={handleMentionDropdownSelect}
+                getDisplayName={fileMentions.getDisplayName}
+              />
+            )}
             <div className="relative rounded-xl border border-border/60 bg-background/90 shadow-sm backdrop-blur-sm">
               {sessionError ? (
                 <div className="absolute -top-16 left-4 right-4 z-10 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/95 px-3 py-2 text-xs text-destructive-foreground shadow-sm">
@@ -2524,12 +2583,43 @@ const AcpChatInterface: React.FC<Props> = ({
                 <textarea
                   ref={textareaRef}
                   value={input}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) => {
+                    setInput(event.target.value);
+                    // Track cursor position for mention detection
+                    setCursorPosition(event.target.selectionStart || 0);
+                  }}
+                  onSelect={(event) => {
+                    // Update cursor position when user clicks or drags
+                    setCursorPosition(event.target.selectionStart || 0);
+                  }}
                   placeholder="Ask to make changes..."
                   rows={1}
                   className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-relaxed text-foreground selection:bg-primary/20 placeholder:text-muted-foreground focus:outline-none"
                   style={{ minHeight: '40px', maxHeight: '200px' }}
                   onKeyDown={(event) => {
+                    // Handle keyboard navigation when mention dropdown is open
+                    if (fileMentions.active) {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        fileMentions.selectNext();
+                      } else if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        fileMentions.selectPrevious();
+                      } else if (event.key === 'Enter') {
+                        event.preventDefault();
+                        fileMentions.selectItem(fileMentions.selectedIndex);
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        // Close dropdown by clearing trigger (handled by hook state)
+                        setCursorPosition(0);
+                      } else if (event.key === 'Tab') {
+                        event.preventDefault();
+                        fileMentions.selectItem(fileMentions.selectedIndex);
+                      }
+                      return;
+                    }
+
+                    // Normal send behavior when dropdown is closed
                     if (event.key === 'Enter' && !event.shiftKey) {
                       event.preventDefault();
                       void handleSend();
