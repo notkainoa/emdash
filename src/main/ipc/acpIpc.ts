@@ -134,4 +134,11 @@ export function registerAcpIpc() {
       return acpService.setConfigOption(args.sessionId, args.configId, args.value);
     }
   );
+
+  ipcMain.handle(
+    'acp:set-plan-mode',
+    async (_event, args: { sessionId: string; enabled: boolean }) => {
+      return acpService.setPlanMode(args.sessionId, args.enabled);
+    }
+  );
 }

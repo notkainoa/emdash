@@ -25,6 +25,10 @@ import InstallBanner from './InstallBanner';
 import { Button } from './ui/button';
 import { getInstallCommandForProvider } from '@shared/providers/registry';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { usePlanMode } from '../hooks/usePlanMode';
+import { useToast } from '../hooks/use-toast';
+import { log } from '@/lib/logger';
 
 // OpenAI logo SVG component
 const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
@@ -755,7 +759,9 @@ const AcpChatInterface: React.FC<Props> = ({
     embeddedContext?: boolean;
   }>({});
   const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
-  const [planModeEnabled, setPlanModeEnabled] = useState(false);
+  const { enabled: planModeEnabled, setEnabled: setPlanEnabled } = usePlanMode(task.id, task.path);
+  const [initialPlanPromptSent, setInitialPlanPromptSent] = useState(false);
+  const { toast } = useToast();
   const [thinkingBudget, setThinkingBudget] = useState<ThinkingBudgetLevel>('medium');
   const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
   const [models, setModels] = useState<AcpModel[]>([]);
@@ -834,6 +840,40 @@ const AcpChatInterface: React.FC<Props> = ({
   useEffect(() => {
     setAgentId(String(provider || 'codex'));
   }, [provider]);
+
+  // Reset initial plan prompt flag when plan mode changes
+  useEffect(() => {
+    if (!planModeEnabled) {
+      setInitialPlanPromptSent(false);
+    }
+  }, [planModeEnabled]);
+
+  // Log plan mode state changes for visibility
+  useEffect(() => {
+    log.info('[plan] state changed', { taskId: task.id, enabled: planModeEnabled });
+  }, [planModeEnabled, task.id]);
+
+  // Show toast notification when plan mode is enabled
+  useEffect(() => {
+    if (planModeEnabled) {
+      toast({
+        title: "Plan Mode Enabled",
+        description: "Agent will analyze and create a plan. Use 'Approve Plan' button when ready to proceed.",
+      });
+    }
+  }, [planModeEnabled, toast]);
+
+  // Sync plan mode state to ACP service (blocks file writes at service level)
+  useEffect(() => {
+    if (sessionId) {
+      window.electronAPI.acpSetPlanMode({
+        sessionId,
+        enabled: planModeEnabled,
+      }).catch((err) => {
+        log.warn('[plan] failed to sync plan mode to ACP service', err);
+      });
+    }
+  }, [planModeEnabled, sessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1253,7 +1293,7 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!sessionId) return;
     if (!trimmed && attachments.length === 0) return;
     setInput('');
-    const promptBlocks = buildPromptBlocks(trimmed);
+    const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, !initialPlanPromptSent && planModeEnabled);
     appendMessage('user', promptBlocks);
     setAttachments([]);
     lastAssistantMessageIdRef.current = null;
@@ -1377,8 +1417,47 @@ const AcpChatInterface: React.FC<Props> = ({
     }
   };
 
-  const buildPromptBlocks = (text: string): ContentBlock[] => {
+  // Plan mode prompt constants
+  const PLAN_MODE_FULL_INSTRUCTION = `SYSTEM: You are in PLAN MODE. Your capabilities are now restricted to READ-ONLY operations.
+
+## What You CAN Do:
+• Read and examine any files in the codebase
+• Search through code and analyze project structure
+• Review documentation and dependencies
+• Run read-only commands (ls, cat, grep, git log, etc.)
+• Propose strategies and implementation plans
+
+## What You CANNOT Do:
+• Edit, modify, or write to any files
+• Run commands that change anything (npm install, git commit, etc.)
+• Create or delete files
+• Make any changes to the codebase or configuration
+
+## Workflow:
+1. Understand the user's request through questions if needed
+2. Research the codebase thoroughly
+3. Create a detailed, step-by-step implementation plan
+4. Present your plan and wait for approval
+
+The user will click "Approve Plan" when ready for you to proceed with implementation.
+
+You may optionally share your plan structure using the ACP plan protocol (session/update with type="plan").`;
+
+  const PLAN_MODE_REMINDER = `REMINDER: You are still in PLAN MODE. Continue analyzing and planning. Do not make any changes until the user clicks "Approve Plan".`;
+
+  const buildPromptBlocks = (text: string, planMode: boolean, isInitial: boolean): ContentBlock[] => {
     const blocks: ContentBlock[] = [];
+
+    // Plan mode prompt injection
+    if (planMode) {
+      if (isInitial) {
+        blocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
+        setInitialPlanPromptSent(true);
+      } else {
+        blocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
+      }
+    }
+
     const supportsImage = Boolean(promptCaps.image);
     const supportsAudio = Boolean(promptCaps.audio);
     const supportsEmbedded = Boolean(promptCaps.embeddedContext);
@@ -2337,7 +2416,9 @@ const AcpChatInterface: React.FC<Props> = ({
   };
 
   return (
-    <div className={`flex h-full flex-col bg-white dark:bg-gray-900 ${className || ''}`}>
+    <div className={`flex h-full flex-col bg-white dark:bg-gray-900 ${className || ''} ${
+      planModeEnabled ? 'ring-2 ring-sky-500/30' : ''
+    }`}>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="px-6">
           <div className="mx-auto max-w-4xl space-y-2">
@@ -2351,6 +2432,17 @@ const AcpChatInterface: React.FC<Props> = ({
             ) : null}
           </div>
         </div>
+
+        {/* Plan mode status banner */}
+        {planModeEnabled ? (
+          <div className="mx-auto max-w-4xl px-6 pt-4">
+            <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
+              <Clipboard className="h-4 w-4" />
+              <span className="font-medium">Plan Mode Active</span>
+              <span className="text-xs opacity-75">— Read-only analysis and planning</span>
+            </div>
+          </div>
+        ) : null}
 
         {plan && plan.length ? (
           <div className="px-6 pt-3">
@@ -2505,6 +2597,43 @@ const AcpChatInterface: React.FC<Props> = ({
                 ))}
               </div>
             ) : null}
+            {/* Approve Plan button - shown when plan mode is active, there's feed content, and agent is not running */}
+            {planModeEnabled && feed.length > 0 && !isRunning ? (
+              <div className="flex justify-end">
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!sessionId) return;
+                          // Exit plan mode (triggers file lock release, cleanup via usePlanMode)
+                          setPlanEnabled(false);
+                          // Send approval prompt to continue
+                          const approvalPrompt = 'The plan is approved. Please proceed with implementation.';
+                          const blocks = [{ type: 'text', text: approvalPrompt }];
+                          appendMessage('user', blocks);
+                          lastAssistantMessageIdRef.current = null;
+                          setRunElapsedMs(0);
+                          setIsRunning(true);
+                          await window.electronAPI.acpSendPrompt({
+                            sessionId,
+                            prompt: blocks,
+                          });
+                        }}
+                        className="inline-flex items-center gap-2 rounded-md border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 transition-colors"
+                      >
+                        <Check className="h-4 w-4" />
+                        <span>Approve Plan</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      Approve the plan and proceed with implementation
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            ) : null}
             <div className="relative rounded-xl border border-border/60 bg-background/90 shadow-sm backdrop-blur-sm">
               {sessionError ? (
                 <div className="absolute -top-16 left-4 right-4 z-10 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/95 px-3 py-2 text-xs text-destructive-foreground shadow-sm">
@@ -2603,19 +2732,42 @@ const AcpChatInterface: React.FC<Props> = ({
                       )}
                     </SelectContent>
                   </Select>
-                  <button
-                    type="button"
-                    onClick={() => setPlanModeEnabled((prev) => !prev)}
-                    aria-pressed={planModeEnabled}
-                    title={planModeEnabled ? 'Plan mode: read-only' : 'Full access'}
-                    className={`flex h-8 items-center justify-center rounded-md px-2 text-muted-foreground transition ${
-                      planModeEnabled
-                        ? 'bg-sky-100/70 text-sky-700 hover:bg-sky-100/90 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/15'
-                        : 'bg-transparent hover:bg-muted/40 hover:text-foreground'
-                    }`}
-                  >
-                    <Clipboard className="h-4 w-4" />
-                  </button>
+                  {planModeEnabled ? (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setPlanEnabled(false)}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-sky-500/60 bg-sky-500/10 px-2 text-xs font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-200 hover:bg-sky-500/20"
+                          >
+                            <Clipboard className="h-4 w-4" />
+                            <span>Plan Mode</span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Exit plan mode without approving (use Approve Plan button to continue)
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => setPlanEnabled(true)}
+                            className="inline-flex h-8 items-center justify-center rounded-md px-2 text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
+                          >
+                            <Clipboard className="h-4 w-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Enter Plan Mode - analyze and plan before making changes
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                   <button
                     type="button"
                     onClick={handleThinkingBudgetClick}

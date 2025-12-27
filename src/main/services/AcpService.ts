@@ -60,6 +60,7 @@ type AcpSessionState = {
   exitInfo?: { code: number | null; signal: string | null };
   exitError?: string;
   closed: boolean;
+  planMode: boolean;
 };
 
 type StartSessionArgs = {
@@ -300,6 +301,7 @@ class AcpService {
       buffer: '',
       lastStderr: '',
       closed: false,
+      planMode: false,
     };
 
     this.sessions.set(key, state);
@@ -536,6 +538,20 @@ class AcpService {
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
     }
+  }
+
+  setPlanMode(sessionId: string, enabled: boolean): { success: boolean; error?: string } {
+    const state = this.sessionById.get(sessionId);
+    log.debug('acp:setPlanMode', {
+      sessionId,
+      enabled,
+      taskId: state?.taskId,
+      providerId: state?.providerId,
+    });
+    if (!state) return { success: false, error: 'Session not found' };
+    state.planMode = enabled;
+    log.info('acp:planMode', { sessionId, enabled, taskId: state.taskId });
+    return { success: true };
   }
 
   async setModel(sessionId: string, modelId: string): Promise<{ success: boolean; error?: string }> {
@@ -945,6 +961,10 @@ class AcpService {
   private async writeTextFile(state: AcpSessionState, params: any): Promise<void> {
     const sessionId = params?.sessionId;
     if (!sessionId || sessionId !== state.sessionId) throw new Error('Invalid session');
+    // Check plan mode - block file writes in plan mode
+    if (state.planMode) {
+      throw new Error('Cannot write files while in plan mode. Please exit plan mode first to make changes.');
+    }
     const filePath = params?.path;
     if (!filePath || !isAbsolutePath(filePath)) throw new Error('Invalid path');
     const abs = ensureWithinRoot(state.cwd, filePath);

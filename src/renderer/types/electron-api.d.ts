@@ -213,6 +213,13 @@ declare global {
         success: boolean;
         error?: string;
       }>;
+      acpSetPlanMode: (args: {
+        sessionId: string;
+        enabled: boolean;
+      }) => Promise<{
+        success: boolean;
+        error?: string;
+      }>;
       onAcpEvent: (listener: (payload: any) => void) => () => void;
       scanCustomCommands: (args: { projectPath: string; providerId: string }) => Promise<{
         success: boolean;
