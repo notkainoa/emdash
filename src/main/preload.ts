@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('acp:set-model', args),
   acpSetConfigOption: (args: { sessionId: string; configId: string; value: unknown }) =>
     ipcRenderer.invoke('acp:set-config-option', args),
+  acpSetPlanMode: (args: { sessionId: string; enabled: boolean }) =>
+    ipcRenderer.invoke('acp:set-plan-mode', args),
   onAcpEvent: (listener: (payload: any) => void) => {
     const channel = 'acp:event';
     const wrapped = (_: Electron.IpcRendererEvent, payload: any) => listener(payload);

@@ -1293,16 +1293,18 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!sessionId) return;
     if (!trimmed && attachments.length === 0) return;
     setInput('');
-    const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, !initialPlanPromptSent && planModeEnabled);
-    appendMessage('user', promptBlocks);
+    const { display: displayBlocks, agent: agentBlocks } = buildPromptBlocks(trimmed, planModeEnabled, !initialPlanPromptSent && planModeEnabled);
+    // Show only user's message in UI (without plan mode instructions)
+    appendMessage('user', displayBlocks);
     setAttachments([]);
     lastAssistantMessageIdRef.current = null;
     setRunElapsedMs(0);
     setIsRunning(true);
-    uiLog('sendPrompt', { sessionId, blocks: promptBlocks });
+    // Send full message with plan mode instructions to agent
+    uiLog('sendPrompt', { sessionId, blocks: agentBlocks });
     const res = await window.electronAPI.acpSendPrompt({
       sessionId,
-      prompt: promptBlocks,
+      prompt: agentBlocks,
     });
     uiLog('sendPrompt:response', res);
     if (!res?.success) {
@@ -1445,33 +1447,24 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
   const PLAN_MODE_REMINDER = `REMINDER: You are still in PLAN MODE. Continue analyzing and planning. Do not make any changes until the user clicks "Approve Plan".`;
 
-  const buildPromptBlocks = (text: string, planMode: boolean, isInitial: boolean): ContentBlock[] => {
-    const blocks: ContentBlock[] = [];
-
-    // Plan mode prompt injection
-    if (planMode) {
-      if (isInitial) {
-        blocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
-        setInitialPlanPromptSent(true);
-      } else {
-        blocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
-      }
-    }
+  const buildPromptBlocks = (text: string, planMode: boolean, isInitial: boolean): { display: ContentBlock[]; agent: ContentBlock[] } => {
+    // Build content blocks (attachments + user text)
+    const contentBlocks: ContentBlock[] = [];
 
     const supportsImage = Boolean(promptCaps.image);
     const supportsAudio = Boolean(promptCaps.audio);
     const supportsEmbedded = Boolean(promptCaps.embeddedContext);
     attachments.forEach((att) => {
       if (att.kind === 'image' && att.data && supportsImage) {
-        blocks.push({ type: 'image', mimeType: att.mimeType, data: att.data });
+        contentBlocks.push({ type: 'image', mimeType: att.mimeType, data: att.data });
         return;
       }
       if (att.kind === 'audio' && att.data && supportsAudio) {
-        blocks.push({ type: 'audio', mimeType: att.mimeType, data: att.data });
+        contentBlocks.push({ type: 'audio', mimeType: att.mimeType, data: att.data });
         return;
       }
       if (att.textContent && supportsEmbedded && att.path) {
-        blocks.push({
+        contentBlocks.push({
           type: 'resource',
           resource: {
             uri: toFileUri(att.path),
@@ -1482,7 +1475,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
         return;
       }
       if (att.path) {
-        blocks.push({
+        contentBlocks.push({
           type: 'resource_link',
           uri: toFileUri(att.path),
           name: att.name,
@@ -1493,9 +1486,25 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       }
     });
     if (text) {
-      blocks.push({ type: 'text', text });
+      contentBlocks.push({ type: 'text', text });
     }
-    return blocks;
+
+    // Display blocks: just the user's content (no plan mode instructions)
+    const displayBlocks = [...contentBlocks];
+
+    // Agent blocks: plan mode instructions + user content
+    const agentBlocks: ContentBlock[] = [];
+    if (planMode) {
+      if (isInitial) {
+        agentBlocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
+        setInitialPlanPromptSent(true);
+      } else {
+        agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
+      }
+    }
+    agentBlocks.push(...contentBlocks);
+
+    return { display: displayBlocks, agent: agentBlocks };
   };
 
   const removeAttachment = (id: string) => {
