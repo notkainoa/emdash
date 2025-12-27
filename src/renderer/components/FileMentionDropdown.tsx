@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { FileText, Folder } from 'lucide-react';
 import type { Item } from '../hooks/useFileMentions';
 
@@ -27,11 +27,13 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
   onSelect,
   getDisplayName,
 }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+
   // Handle click outside to close (parent handles this)
   // Scroll selected item into view when selection changes
   useEffect(() => {
-    const selectedElement = document.getElementById(
-      `file-mention-item-${selectedIndex}`
+    const selectedElement = listRef.current?.querySelector<HTMLButtonElement>(
+      `[data-mention-index="${selectedIndex}"]`
     );
     if (selectedElement) {
       selectedElement.scrollIntoView({
@@ -63,7 +65,10 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
   }
 
   return (
-    <div className="max-h-64 overflow-y-auto rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
+    <div
+      ref={listRef}
+      className="max-h-64 overflow-y-auto rounded-lg border border-border bg-background p-2 text-xs shadow-lg"
+    >
       {items.map((item, index) => {
         const isSelected = index === selectedIndex;
         const displayName = getDisplayName(item, query);
@@ -74,7 +79,7 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
         return (
           <button
             key={item.path}
-            id={`file-mention-item-${index}`}
+            data-mention-index={index}
             type="button"
             className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors ${
               isSelected

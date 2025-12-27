@@ -57,11 +57,10 @@ export function filterByPath(items: Item[], query: string, limit = 100): Item[] 
   const namePrefixLower = namePrefix.toLowerCase();
 
   const filtered = items.filter((item) => {
-    const itemPath = item.path.replace(/\\/g, '/');
-    const itemLower = itemPath.toLowerCase();
+    const itemLower = item.path.toLowerCase();
     if (!itemLower.startsWith(dirPrefixLower)) return false;
 
-    const remainder = itemPath.slice(dirPrefix.length);
+    const remainder = item.path.slice(dirPrefix.length);
     if (!remainder) return false;
 
     // Only show direct children in the current "directory" prefix.
@@ -77,8 +76,8 @@ export function filterByPath(items: Item[], query: string, limit = 100): Item[] 
       if (a.type === 'dir' && b.type !== 'dir') return -1;
       if (a.type !== 'dir' && b.type === 'dir') return 1;
 
-      const aName = a.path.replace(/\\/g, '/').slice(dirPrefix.length);
-      const bName = b.path.replace(/\\/g, '/').slice(dirPrefix.length);
+      const aName = a.path.slice(dirPrefix.length);
+      const bName = b.path.slice(dirPrefix.length);
       return aName.localeCompare(bName);
     })
     .slice(0, limit);
@@ -94,12 +93,11 @@ export function getDisplayName(item: Item, query: string): string {
   const dirPrefix = lastSlash >= 0 ? normalizedQuery.slice(0, lastSlash + 1) : '';
   if (!dirPrefix) return item.path;
 
-  const itemPath = item.path.replace(/\\/g, '/');
-  if (itemPath.toLowerCase().startsWith(dirPrefix.toLowerCase())) {
-    return itemPath.slice(dirPrefix.length);
+  if (item.path.toLowerCase().startsWith(dirPrefix.toLowerCase())) {
+    return item.path.slice(dirPrefix.length);
   }
 
-  return itemPath;
+  return item.path;
 }
 
 /**
@@ -154,8 +152,7 @@ export function useFileMentions({
       if (!item || !trigger.active) return;
 
       const endIndex = cursorPosition;
-      const normalizedPath = item.path.replace(/\\/g, '/');
-      const filePath = item.type === 'dir' ? `${normalizedPath}/` : normalizedPath;
+      const filePath = item.type === 'dir' ? `${item.path}/` : item.path;
 
       onSelect(filePath, trigger.startIndex, endIndex);
       setSelectedIndex(0);
