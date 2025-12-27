@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { FileText, Folder } from 'lucide-react';
+import { getMentionBasePath } from '../lib/fileMentions';
 import type { Item } from '../hooks/useFileMentions';
 
 type FileMentionDropdownProps = {
@@ -42,15 +43,6 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
     }
   }, [selectedIndex]);
 
-  // Get the base path for highlighting (the part the user typed)
-  const getBasePath = (itemPath: string, query: string): string => {
-    if (!query) return '';
-    if (itemPath.toLowerCase().startsWith(query.toLowerCase())) {
-      return itemPath.slice(0, query.length);
-    }
-    return '';
-  };
-
   // Get the remaining path (the part to highlight/dim)
   const getRemainingPath = (itemPath: string, basePath: string): string => {
     return itemPath.slice(basePath.length);
@@ -72,7 +64,7 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
       {items.map((item, index) => {
         const isSelected = index === selectedIndex;
         const displayName = getDisplayName(item, query);
-        const basePath = getBasePath(item.path, query);
+        const basePath = getMentionBasePath(item.path, query);
         const remainingPath = getRemainingPath(item.path, basePath);
         const isDir = item.type === 'dir';
 

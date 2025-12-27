@@ -20,6 +20,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { getMentionKeyAction, shouldCloseMentionDropdown } from '../lib/fileMentions';
 import { useFileMentions } from '../hooks/useFileMentions';
 import FileMentionDropdown from './FileMentionDropdown';
 import { Task } from '../types/chat';
@@ -905,13 +906,16 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!fileMentions.active) return;
 
     const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (textareaRef.current?.contains(target)) return;
-      if (mentionDropdownRef.current?.contains(target)) return;
-
-      // Close dropdown by invalidating the active trigger
-      setCursorPosition(0);
+      if (
+        shouldCloseMentionDropdown({
+          target: event.target as Node | null,
+          textareaEl: textareaRef.current,
+          dropdownEl: mentionDropdownRef.current,
+        })
+      ) {
+        // Close dropdown by invalidating the active trigger
+        setCursorPosition(0);
+      }
     };
 
     document.addEventListener('click', handleClickOutside);
@@ -3429,24 +3433,24 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                   className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-relaxed text-foreground selection:bg-primary/20 placeholder:text-muted-foreground focus:outline-none"
                   style={{ minHeight: '40px', maxHeight: '200px' }}
                   onKeyDown={(event) => {
-                    // Handle keyboard navigation when mention dropdown is open
-                    if (fileMentions.active) {
-                      if (event.key === 'ArrowDown') {
-                        event.preventDefault();
+                    const mentionKeyAction = getMentionKeyAction({
+                      active: fileMentions.active,
+                      hasItems: fileMentions.items.length > 0,
+                      key: event.key,
+                      shiftKey: event.shiftKey,
+                    });
+
+                    if (mentionKeyAction !== 'none') {
+                      event.preventDefault();
+                      if (mentionKeyAction === 'next') {
                         fileMentions.selectNext();
-                      } else if (event.key === 'ArrowUp') {
-                        event.preventDefault();
+                      } else if (mentionKeyAction === 'prev') {
                         fileMentions.selectPrevious();
-                      } else if (event.key === 'Enter') {
-                        event.preventDefault();
+                      } else if (mentionKeyAction === 'select') {
                         fileMentions.selectItem(fileMentions.selectedIndex);
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault();
+                      } else if (mentionKeyAction === 'close') {
                         // Close dropdown by clearing trigger (handled by hook state)
                         setCursorPosition(0);
-                      } else if (event.key === 'Tab') {
-                        event.preventDefault();
-                        fileMentions.selectItem(fileMentions.selectedIndex);
                       }
                       return;
                     }

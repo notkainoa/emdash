@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { normalizeMentionQuery } from '../lib/fileMentions';
 import { useFileIndex } from './useFileIndex';
 
 type Item = { path: string; type: 'file' | 'dir' };
@@ -48,7 +49,7 @@ export function detectMentionTrigger(
  * - Path query: show items starting with that path
  */
 export function filterByPath(items: Item[], query: string, limit = 100): Item[] {
-  const normalizedQuery = query.replace(/\\/g, '/');
+  const normalizedQuery = normalizeMentionQuery(query);
   const lastSlash = normalizedQuery.lastIndexOf('/');
   const dirPrefix = lastSlash >= 0 ? normalizedQuery.slice(0, lastSlash + 1) : '';
   const namePrefix = lastSlash >= 0 ? normalizedQuery.slice(lastSlash + 1) : normalizedQuery;
@@ -88,7 +89,7 @@ export function filterByPath(items: Item[], query: string, limit = 100): Item[] 
  * For nested paths, show just the last segment.
  */
 export function getDisplayName(item: Item, query: string): string {
-  const normalizedQuery = query.replace(/\\/g, '/');
+  const normalizedQuery = normalizeMentionQuery(query);
   const lastSlash = normalizedQuery.lastIndexOf('/');
   const dirPrefix = lastSlash >= 0 ? normalizedQuery.slice(0, lastSlash + 1) : '';
   if (!dirPrefix) return item.path;
