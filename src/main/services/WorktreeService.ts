@@ -51,22 +51,31 @@ export class WorktreeService {
     projectPath: string,
     taskName: string,
     projectId: string,
-    autoApprove?: boolean
+    autoApprove?: boolean,
+    branchName?: string
   ): Promise<WorktreeInfo> {
     try {
       const sluggedName = this.slugify(taskName);
       const timestamp = Date.now();
-      const { getAppSettings } = await import('../settings');
-      const settings = getAppSettings();
-      const template = settings?.repository?.branchTemplate || 'agent/{slug}-{timestamp}';
-      const branchName = this.renderBranchNameTemplate(template, {
-        slug: sluggedName,
-        timestamp: String(timestamp),
-      });
+
+      // Use provided branch name or generate one using template
+      let finalBranchName = branchName;
+      if (!finalBranchName) {
+        const { getAppSettings } = await import('../settings');
+        const settings = getAppSettings();
+        const template = settings?.repository?.branchTemplate || 'agent/{slug}-{timestamp}';
+        finalBranchName = this.renderBranchNameTemplate(template, {
+          slug: sluggedName,
+          timestamp: String(timestamp),
+        });
+      }
+
+      // Ensure branch name is sanitized
+      finalBranchName = this.sanitizeBranchName(finalBranchName);
       const worktreePath = path.join(projectPath, '..', `worktrees/${sluggedName}-${timestamp}`);
       const worktreeId = this.stableIdFromPath(worktreePath);
 
-      log.info(`Creating worktree: ${branchName} -> ${worktreePath}`);
+      log.info(`Creating worktree: ${finalBranchName} -> ${worktreePath}`);
 
       // Check if worktree path already exists
       if (fs.existsSync(worktreePath)) {
@@ -89,7 +98,7 @@ export class WorktreeService {
       // Create the worktree
       const { stdout, stderr } = await execFileAsync(
         'git',
-        ['worktree', 'add', '-b', branchName, worktreePath, fetchedBaseRef.fullRef],
+        ['worktree', 'add', '-b', finalBranchName, worktreePath, fetchedBaseRef.fullRef],
         { cwd: projectPath }
       );
 
@@ -114,7 +123,7 @@ export class WorktreeService {
       const worktreeInfo: WorktreeInfo = {
         id: worktreeId,
         name: taskName,
-        branch: branchName,
+        branch: finalBranchName,
         path: worktreePath,
         projectId,
         status: 'active',
@@ -123,15 +132,15 @@ export class WorktreeService {
 
       this.worktrees.set(worktreeInfo.id, worktreeInfo);
 
-      log.info(`Created worktree: ${taskName} -> ${branchName}`);
+      log.info(`Created worktree: ${taskName} -> ${finalBranchName}`);
 
       // Push the new branch to origin and set upstream so PRs work out of the box
       if (settings?.repository?.pushOnCreate !== false) {
         try {
-          await execFileAsync('git', ['push', '--set-upstream', 'origin', branchName], {
+          await execFileAsync('git', ['push', '--set-upstream', 'origin', finalBranchName], {
             cwd: worktreePath,
           });
-          log.info(`Pushed branch ${branchName} to origin with upstream tracking`);
+          log.info(`Pushed branch ${finalBranchName} to origin with upstream tracking`);
         } catch (pushErr) {
           log.warn('Initial push of worktree branch failed:', pushErr as any);
           // Don't fail worktree creation if push fails - user can push manually later
