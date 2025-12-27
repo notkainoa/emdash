@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { getMentionKeyAction, shouldCloseMentionDropdown } from '../lib/fileMentions';
+import { getMentionKeyAction } from '../lib/fileMentions';
 import { useFileMentions } from '../hooks/useFileMentions';
 import FileMentionDropdown from './FileMentionDropdown';
 import { Task } from '../types/chat';
@@ -844,7 +844,6 @@ const AcpChatInterface: React.FC<Props> = ({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const mentionDropdownRef = useRef<HTMLDivElement | null>(null);
   const hydratingRef = useRef(false);
   const sequenceRef = useRef(0);
   const feedMetaRef = useRef<Record<string, { sequence: number; createdAt: string }>>({});
@@ -858,6 +857,45 @@ const AcpChatInterface: React.FC<Props> = ({
 
   // Track cursor position for mention detection
   const [cursorPosition, setCursorPosition] = useState(0);
+
+  // Calculate caret coordinates for dropdown positioning
+  const getCaretCoordinates = useCallback((textarea: HTMLTextAreaElement, position: number): DOMRect | null => {
+    const { offsetLeft, offsetTop } = textarea;
+    const div = document.createElement('div');
+    const style = getComputedStyle(textarea);
+
+    div.textContent = textarea.value.substring(0, position);
+    Object.assign(div.style, {
+      position: 'absolute',
+      visibility: 'hidden',
+      whiteSpace: 'pre-wrap',
+      wordWrap: 'break-word',
+      top: '0px',
+      left: '0px',
+      font: style.font,
+      padding: style.padding,
+      border: style.border,
+      width: style.width,
+      height: style.height,
+    });
+
+    document.body.appendChild(div);
+    const span = document.createElement('span');
+    span.textContent = textarea.value.substring(position) || '.';
+    div.appendChild(span);
+
+    const coordinates = new DOMRect(
+      span.offsetLeft + offsetLeft,
+      span.offsetTop + offsetTop + parseInt(style.lineHeight || '0'),
+      0,
+      parseInt(style.lineHeight || '0')
+    );
+
+    document.body.removeChild(div);
+    return coordinates;
+  }, []);
+
+  const [caretPosition, setCaretPosition] = useState<DOMRect | null>(null);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
@@ -893,6 +931,16 @@ const AcpChatInterface: React.FC<Props> = ({
     onSelect: handleMentionSelect,
   });
 
+  // Update caret position when mention is active
+  useEffect(() => {
+    if (fileMentions.active && textareaRef.current) {
+      const coords = getCaretCoordinates(textareaRef.current, cursorPosition);
+      setCaretPosition(coords);
+    } else {
+      setCaretPosition(null);
+    }
+  }, [fileMentions.active, fileMentions.query, cursorPosition, getCaretCoordinates]);
+
   // Handle dropdown item selection
   const handleMentionDropdownSelect = useCallback(
     (index: number) => {
@@ -901,17 +949,16 @@ const AcpChatInterface: React.FC<Props> = ({
     [fileMentions]
   );
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking outside (Popover renders via Portal, so we check clicks outside textarea)
   useEffect(() => {
     if (!fileMentions.active) return;
 
     const handleClickOutside = (event: MouseEvent) => {
+      // Close if click is outside the textarea (Popover handles its own portal)
       if (
-        shouldCloseMentionDropdown({
-          target: event.target as Node | null,
-          textareaEl: textareaRef.current,
-          dropdownEl: mentionDropdownRef.current,
-        })
+        event.target &&
+        textareaRef.current &&
+        !textareaRef.current.contains(event.target as Node)
       ) {
         // Close dropdown by invalidating the active trigger
         setCursorPosition(0);
@@ -3343,15 +3390,16 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               </div>
             ) : null}
             {fileMentions.active && (
-              <div ref={mentionDropdownRef}>
-                <FileMentionDropdown
-                  items={fileMentions.items}
-                  query={fileMentions.query}
-                  selectedIndex={fileMentions.selectedIndex}
-                  onSelect={handleMentionDropdownSelect}
-                  getDisplayName={fileMentions.getDisplayName}
-                />
-              </div>
+              <FileMentionDropdown
+                items={fileMentions.items}
+                query={fileMentions.query}
+                selectedIndex={fileMentions.selectedIndex}
+                onSelect={handleMentionDropdownSelect}
+                getDisplayName={fileMentions.getDisplayName}
+                anchorRect={caretPosition}
+                error={fileMentions.error}
+                loading={fileMentions.loading}
+              />
             )}
             <div
               className={cn(

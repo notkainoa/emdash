@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { normalizeMentionQuery } from '../lib/fileMentions';
+import { MAX_MENTION_RESULTS, normalizeMentionQuery } from '../lib/fileMentions';
 import { useFileIndex } from './useFileIndex';
 
 type Item = { path: string; type: 'file' | 'dir' };
@@ -124,14 +124,14 @@ export function useFileMentions({
   );
 
   // Lazy-load the file index only when the user is actively in a mention context.
-  const { items, loading } = useFileIndex(trigger.active ? rootPath : undefined);
+  const { items, loading, error } = useFileIndex(trigger.active ? rootPath : undefined);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Filter items based on query
   const filteredItems = useMemo<Item[]>(() => {
     if (!trigger.active) return [];
-    return filterByPath(items, trigger.query, 100);
+    return filterByPath(items, trigger.query, MAX_MENTION_RESULTS);
   }, [items, trigger]);
 
   const activeQuery = trigger.active ? trigger.query : null;
@@ -178,6 +178,7 @@ export function useFileMentions({
     query: trigger.active ? trigger.query : '',
     items: filteredItems,
     loading,
+    error,
     selectedIndex: boundedSelectedIndex,
     setSelectedIndex,
     selectItem,

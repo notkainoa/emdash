@@ -1,5 +1,11 @@
 export type MentionKeyAction = 'next' | 'prev' | 'select' | 'close' | 'none';
 
+/**
+ * Maximum number of file/folder results to show in mention dropdown.
+ * Balances UI responsiveness with file discovery capabilities.
+ */
+export const MAX_MENTION_RESULTS = 100;
+
 export const normalizeMentionQuery = (query: string): string => query.replace(/\\/g, '/');
 
 export const getMentionBasePath = (itemPath: string, query: string): string => {
