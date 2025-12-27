@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { Measurable } from '@radix-ui/rect';
 import { AlertCircle, FileText, Folder } from 'lucide-react';
 import { getMentionBasePath } from '../lib/fileMentions';
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover';
@@ -25,6 +26,12 @@ type FileMentionDropdownProps = {
  * - Max 8 visible items with scroll
  * - Empty state when no matches
  */
+
+// Helper function moved outside component to avoid recreation on every render
+const getRemainingPath = (itemPath: string, basePath: string): string => {
+  return itemPath.slice(basePath.length);
+};
+
 export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
   items,
   query,
@@ -39,32 +46,35 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
   const hoverTimeoutRef = useRef<number | null>(null);
 
   // Virtual element for caret-based positioning
-  const [virtualElement, setVirtualElement] = useState<{ current: { getBoundingClientRect: () => DOMRect } }>({
+  const [virtualElement, setVirtualElement] = useState<React.RefObject<Measurable>>({
     current: {
-      getBoundingClientRect: () => DOMRect.fromRect({ width: 0, height: 0, x: 0, y: 0 })
-    }
+      getBoundingClientRect: () => DOMRect.fromRect({ width: 0, height: 0, x: 0, y: 0 }),
+    },
   });
 
   useEffect(() => {
     if (anchorRect) {
       setVirtualElement({
         current: {
-          getBoundingClientRect: () => anchorRect
-        }
+          getBoundingClientRect: () => anchorRect,
+        },
       });
     }
   }, [anchorRect]);
 
   // Hover selection with debounce to prevent jittery navigation
-  const handleMouseEnter = useCallback((index: number) => {
-    if (hoverTimeoutRef.current !== null) {
-      clearTimeout(hoverTimeoutRef.current);
-    }
-    hoverTimeoutRef.current = window.setTimeout(() => {
-      onSelect(index);
-      hoverTimeoutRef.current = null;
-    }, 150);
-  }, [onSelect]);
+  const handleMouseEnter = useCallback(
+    (index: number) => {
+      if (hoverTimeoutRef.current !== null) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      hoverTimeoutRef.current = window.setTimeout(() => {
+        onSelect(index);
+        hoverTimeoutRef.current = null;
+      }, 150);
+    },
+    [onSelect]
+  );
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current !== null) {
@@ -95,11 +105,6 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
     }
   }, [selectedIndex]);
 
-  // Get the remaining path (the part to highlight/dim)
-  const getRemainingPath = (itemPath: string, basePath: string): string => {
-    return itemPath.slice(basePath.length);
-  };
-
   if (loading) {
     return (
       <div className="rounded-lg border border-border bg-background p-3 text-xs shadow-lg">
@@ -113,7 +118,7 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
 
   if (error) {
     return (
-      <div className="rounded-md border border-red-200/70 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:border-red-500/40 dark:text-red-400 shadow-lg">
+      <div className="rounded-md border border-red-200/70 bg-red-500/10 px-3 py-2 text-xs text-red-600 shadow-lg dark:border-red-500/40 dark:text-red-400">
         <div className="flex items-center gap-2">
           <AlertCircle className="h-4 w-4" />
           <span>{error}</span>
@@ -142,6 +147,8 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
       >
         <div
           ref={listRef}
+          role="listbox"
+          aria-label="File suggestions"
           className="max-h-64 overflow-y-auto rounded-lg border border-border bg-background p-2 text-xs shadow-lg"
         >
           {items.map((item, index) => {
@@ -156,19 +163,19 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
                 key={item.path}
                 data-mention-index={index}
                 type="button"
+                role="option"
+                aria-selected={isSelected}
                 className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors ${
-                  isSelected
-                    ? 'bg-muted/60'
-                    : 'hover:bg-muted/40'
+                  isSelected ? 'bg-muted/60' : 'hover:bg-muted/40'
                 }`}
                 onClick={() => onSelect(index)}
                 onMouseEnter={() => handleMouseEnter(index)}
                 onMouseLeave={handleMouseLeave}
               >
                 {isDir ? (
-                  <Folder className="h-4 w-4 text-blue-500 shrink-0" />
+                  <Folder className="h-4 w-4 shrink-0 text-blue-500" />
                 ) : (
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <span className="min-w-0 flex-1 truncate">
                   {basePath ? (

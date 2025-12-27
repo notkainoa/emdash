@@ -23,10 +23,7 @@ type UseFileMentionsProps = {
  * Detect if the cursor is in a mention context.
  * Only triggers when @ is at start of word (after space or start of input).
  */
-export function detectMentionTrigger(
-  input: string,
-  cursorPosition: number
-): MentionState {
+export function detectMentionTrigger(input: string, cursorPosition: number): MentionState {
   const textBeforeCursor = input.slice(0, cursorPosition);
 
   // Match @ at start of word: (start of string or after whitespace) + @ + path
@@ -162,15 +159,11 @@ export function useFileMentions({
   );
 
   const selectNext = useCallback(() => {
-    setSelectedIndex((prev) =>
-      prev >= maxIndex ? 0 : prev + 1
-    );
+    setSelectedIndex((prev) => (prev >= maxIndex ? 0 : prev + 1));
   }, [maxIndex]);
 
   const selectPrevious = useCallback(() => {
-    setSelectedIndex((prev) =>
-      prev <= 0 ? maxIndex : prev - 1
-    );
+    setSelectedIndex((prev) => (prev <= 0 ? maxIndex : prev - 1));
   }, [maxIndex]);
 
   return {

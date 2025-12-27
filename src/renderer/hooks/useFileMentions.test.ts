@@ -93,4 +93,3 @@ describe('getDisplayName', () => {
     expect(getDisplayName({ path: 'README.md', type: 'file' }, 're')).toBe('README.md');
   });
 });
-
