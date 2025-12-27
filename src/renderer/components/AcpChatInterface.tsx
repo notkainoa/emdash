@@ -3523,7 +3523,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
           </div>
         </div>
         {showJumpToLatest ? (
-          <div className="pointer-events-none absolute bottom-6 right-8 z-20">
+          <div className="pointer-events-none absolute bottom-6 left-8 z-20">
             <button
               type="button"
               onClick={handleJumpToLatest}
