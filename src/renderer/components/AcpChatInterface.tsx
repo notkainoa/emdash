@@ -232,7 +232,9 @@ const writeLocalStorage = (key: string, value: string | null | undefined) => {
   if (!value) return;
   try {
     window.localStorage.setItem(key, value);
-  } catch {}
+  } catch (error) {
+    console.error(`Failed to write to localStorage for key "${key}":`, error);
+  }
 };
 
 const LoadingTimer: React.FC<{ label: string }> = ({ label }) => (
@@ -2380,20 +2382,16 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   useEffect(() => {
     return () => {
       if (savedMessageIdsRef.current.size === 0) return;
-      const value = persistedModelRef.current;
-      if (!value) return;
-      writeLocalStorage(modelStorageKey, value);
+      const modelValue = persistedModelRef.current;
+      if (modelValue) {
+        writeLocalStorage(modelStorageKey, modelValue);
+      }
+      const budgetValue = persistedThinkingBudgetRef.current;
+      if (budgetValue) {
+        writeLocalStorage(thinkingStorageKey, budgetValue);
+      }
     };
-  }, [modelStorageKey]);
-
-  useEffect(() => {
-    return () => {
-      if (savedMessageIdsRef.current.size === 0) return;
-      const value = persistedThinkingBudgetRef.current;
-      if (!value) return;
-      writeLocalStorage(thinkingStorageKey, value);
-    };
-  }, [thinkingStorageKey]);
+  }, [modelStorageKey, thinkingStorageKey]);
 
   const handleThinkingBudgetClick = useCallback(() => {
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
