@@ -200,6 +200,9 @@ const MAX_PERSISTED_RESOURCE_CHARS = 1200;
 const MAX_PERSISTED_MESSAGE_CHARS = 12000;
 const MAX_PERSISTED_TOOL_INPUT_CHARS = 4000;
 const MAX_PERSISTED_TERMINAL_LINES = 120;
+const SESSION_ERROR_PREVIEW_LIMIT = 360;
+const SESSION_ERROR_PREVIEW_LINES = 4;
+const SESSION_ERROR_COPY_ID = 'acp-session-error';
 
 const normalizeNewlines = (text: string) => text.replace(/\r\n/g, '\n');
 
@@ -215,6 +218,20 @@ const pluralize = (value: number, noun: string) =>
   value === 1 ? `${value} ${noun}` : `${value} ${noun}s`;
 
 const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ').trim();
+
+const buildSessionErrorPreview = (text: string) => {
+  const normalized = normalizeNewlines(text).trim();
+  if (!normalized) return '';
+  const lines = normalized.split('\n');
+  const clippedLines = lines.slice(0, SESSION_ERROR_PREVIEW_LINES);
+  let preview = clippedLines.join('\n');
+  const truncatedLines = lines.length > SESSION_ERROR_PREVIEW_LINES;
+  preview = truncateText(preview, SESSION_ERROR_PREVIEW_LIMIT);
+  if (truncatedLines && !preview.endsWith('...')) {
+    preview = `${preview}...`;
+  }
+  return preview;
+};
 
 const formatDuration = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -1675,6 +1692,7 @@ const AcpChatInterface: React.FC<Props> = ({
       if (!payload || payload.taskId !== task.id) return;
       uiLog('event', payload);
       if (payload.type === 'session_started') {
+        setSessionError(null);
         if (payload.sessionId) {
           setSessionId(payload.sessionId);
         }
@@ -1767,6 +1785,7 @@ const AcpChatInterface: React.FC<Props> = ({
           terminalId: payload.terminalId,
           chunkSize: String(payload.chunk ?? '').length,
         });
+        setSessionError(null);
         const terminalId = payload.terminalId as string;
         if (!terminalId) return;
         const chunk = String(payload.chunk ?? '');
@@ -1800,6 +1819,7 @@ const AcpChatInterface: React.FC<Props> = ({
           updateType === 'thought_message' ||
           updateType === 'thought_message_chunk'
         ) {
+          setSessionError(null);
           const isThought = updateType.startsWith('thought');
           const role =
             updateType === 'agent_message_chunk' || updateType === 'agent_message'
@@ -1819,6 +1839,7 @@ const AcpChatInterface: React.FC<Props> = ({
           return;
         }
         if (updateType === 'plan') {
+          setSessionError(null);
           const entries = Array.isArray(update.entries) ? update.entries : [];
           setPlan(entries);
           maybePersistPlan(entries);
@@ -1832,6 +1853,7 @@ const AcpChatInterface: React.FC<Props> = ({
           return;
         }
         if (updateType === 'tool_call' || updateType === 'tool_call_update') {
+          setSessionError(null);
           const payloadUpdate = update.toolCall ?? update;
           const toolCallId = payloadUpdate.toolCallId as string;
           if (!toolCallId) return;
@@ -2268,6 +2290,10 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   }, [commands, input]);
 
   const runTimerLabel = useMemo(() => formatDuration(runElapsedMs), [runElapsedMs]);
+  const sessionErrorPreview = useMemo(() => {
+    if (!sessionError) return '';
+    return buildSessionErrorPreview(sessionError);
+  }, [sessionError]);
 
   const latestToolCallId = useMemo(() => {
     for (let i = feed.length - 1; i >= 0; i -= 1) {
@@ -3469,10 +3495,37 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               {sessionError ? (
                 <div className="absolute -top-16 left-4 right-4 z-10 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/95 px-3 py-2 text-xs text-destructive-foreground shadow-sm">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <div className="font-semibold">ACP session failed</div>
-                    <div>{sessionError}</div>
+                    <div className="whitespace-pre-wrap break-words">{sessionErrorPreview}</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive-foreground hover:bg-destructive/20"
+                        onClick={() => handleCopyMessage(SESSION_ERROR_COPY_ID, sessionError ?? '')}
+                        disabled={!sessionError}
+                      >
+                        {copiedMessageId === SESSION_ERROR_COPY_ID ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        <span>
+                          {copiedMessageId === SESSION_ERROR_COPY_ID
+                            ? 'Copied'
+                            : 'Copy full error'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    aria-label="Dismiss ACP session error"
+                    onClick={() => setSessionError(null)}
+                    className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded text-destructive-foreground/80 hover:bg-destructive/20 hover:text-destructive-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-destructive/60"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
                 </div>
               ) : null}
               {planModeEnabled && lastUserPlanModeSent ? (
