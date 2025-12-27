@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
   Square,
   Terminal,
   Trash2,
+  X,
 } from 'lucide-react';
 import { Task } from '../types/chat';
 import { type Provider } from '../types';
@@ -38,23 +39,13 @@ const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
   </svg>
 );
 import { Spinner } from './ui/spinner';
-import type { AcpConfigOption } from '@shared/types/acp';
-
-// Module-level session storage for per-chat model selection
-// Persists within app session, clears on restart
-const chatModelSelections = new Map<string, string>();
-// Module-level session storage for per-chat thinking budget selection
-// Persists within app session, clears on restart
-const chatThinkingBudgetSelections = new Map<string, ThinkingBudgetLevel>();
-
-const ACP_MODELS = [
-  { id: 'gpt-5.2', label: 'GPT-5.2' },
-  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-  { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-  { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-] as const;
-
-const DEFAULT_MODEL_ID = 'gpt-5.2-codex';
+import { AnimatePresence, motion } from 'motion/react';
+import { Badge } from './ui/badge';
+import { cn } from '@/lib/utils';
+import { extractCurrentModelId, extractModelsFromPayload } from '@shared/acpUtils';
+import type { AcpConfigOption, AcpModel } from '@shared/types/acp';
+import { usePlanMode } from '@/hooks/usePlanMode';
+import { logPlanEvent } from '@/lib/planLogs';
 
 type ContentBlock = {
   type: string;
@@ -492,11 +483,6 @@ const EFFORT_LABELS: Record<ThinkingBudgetLevel, string> = {
 };
 const DEFAULT_THINKING_BUDGET: ThinkingBudgetLevel = 'medium';
 
-const isThinkingBudgetLevel = (value: string | null): value is ThinkingBudgetLevel => {
-  if (!value) return false;
-  return EFFORT_ORDER.includes(value as ThinkingBudgetLevel);
-};
-
 const flattenConfigChoices = (choices: any[]): any[] => {
   const flat: any[] = [];
   for (const choice of choices) {
@@ -581,12 +567,102 @@ const normalizeEffort = (raw: unknown): string | null => {
   return null;
 };
 
+const parseEffortFromLabel = (label?: string | null): string | null => {
+  if (!label) return null;
+  const match = label.match(/\(([^)]+)\)\s*$/);
+  if (!match) return null;
+  return normalizeEffort(match[1]);
+};
+
+const stripEffortSuffix = (label?: string | null): string | null => {
+  if (!label) return null;
+  const effort = parseEffortFromLabel(label);
+  if (!effort) return label;
+  return label.replace(/\s*\([^)]+\)\s*$/, '').trim();
+};
+
+const formatModelLabel = (label: string): string => {
+  const parts = label.split(/[-\s]+/).filter(Boolean);
+  if (!parts.length) return label;
+  const formatted = parts.map((part) => {
+    const lower = part.toLowerCase();
+    if (lower === 'gpt') return 'GPT';
+    if (lower === 'codex') return 'Codex';
+    if (lower === 'mini') return 'Mini';
+    if (lower === 'max') return 'Max';
+    if (/^\d+(\.\d+)?$/.test(part)) return part;
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  });
+  return formatted.join('-');
+};
+
+const splitModelId = (modelId?: string | null, label?: string | null) => {
+  if (!modelId) {
+    return {
+      baseId: '',
+      effort: parseEffortFromLabel(label),
+    };
+  }
+  if (modelId.includes('/')) {
+    const parts = modelId.split('/');
+    const tail = parts[parts.length - 1];
+    const effort = normalizeEffort(tail);
+    if (effort) {
+      return {
+        baseId: parts.slice(0, -1).join('/'),
+        effort,
+      };
+    }
+  }
+  return {
+    baseId: modelId,
+    effort: parseEffortFromLabel(label),
+  };
+};
+
 const detectBudgetLevel = (text: string): ThinkingBudgetLevel | null => {
   if (/\bminimal\b/.test(text) || /\b(none|off|disabled|disable|zero)\b/.test(text)) return 'minimal';
   if (/\blow\b/.test(text) || text === '1') return 'low';
   if (/\bmedium\b/.test(text) || text === '2') return 'medium';
   if (/\bhigh\b/.test(text) || text === '3') return 'high';
   if (/\b(xhigh|extra\s*high)\b/.test(text) || text === '4') return 'xhigh';
+  return null;
+};
+
+const budgetFromEffort = (effort?: string | null): ThinkingBudgetLevel | null => {
+  const normalized = normalizeEffort(effort);
+  if (!normalized) return null;
+  if (
+    normalized === 'minimal' ||
+    normalized === 'low' ||
+    normalized === 'medium' ||
+    normalized === 'high' ||
+    normalized === 'xhigh'
+  ) {
+    return normalized;
+  }
+  return null;
+};
+
+const chooseEffortForBudget = (
+  budget: ThinkingBudgetLevel,
+  available: Set<string>
+): ThinkingBudgetLevel | null => {
+  const normalizedAvailable = new Set(
+    Array.from(available)
+      .map((entry) => normalizeEffort(entry))
+      .filter(Boolean) as ThinkingBudgetLevel[]
+  );
+  if (normalizedAvailable.has(budget)) return budget;
+  const idx = EFFORT_ORDER.indexOf(budget);
+  for (let i = idx; i >= 0; i -= 1) {
+    const level = EFFORT_ORDER[i];
+    if (normalizedAvailable.has(level)) return level;
+  }
+  for (let i = idx + 1; i < EFFORT_ORDER.length; i += 1) {
+    const level = EFFORT_ORDER[i];
+    if (normalizedAvailable.has(level)) return level;
+  }
   return null;
 };
 
@@ -646,6 +722,57 @@ const findThinkingConfigOption = (options: AcpConfigOption[]): AcpConfigOption |
   return best?.option ?? null;
 };
 
+const findModelConfigOption = (options: AcpConfigOption[]): AcpConfigOption | null => {
+  let best: { option: AcpConfigOption; score: number } | null = null;
+  for (const option of options) {
+    const haystack = normalizeBudgetText(
+      [option.id, option.name, option.label, option.description].filter(Boolean).join(' ')
+    );
+    if (!/model/.test(haystack)) continue;
+    if (/(reason|thinking|effort|budget)/.test(haystack)) continue;
+    const choices = extractConfigChoices(option);
+    const hasChoices = choices.length > 0;
+    let score = 0;
+    if (option.type === 'select' || option.type === 'enum') score += 2;
+    if (hasChoices) score += 2;
+    if (/(model)/.test(haystack)) score += 1;
+    if (!best || score > best.score) best = { option, score };
+  }
+  return best?.option ?? null;
+};
+
+const normalizeModelOption = (model: any): ModelOption | null => {
+  if (!model) return null;
+  if (typeof model === 'string') {
+    return { id: model, label: model };
+  }
+  if (typeof model === 'object') {
+    const id =
+      model.id ??
+      model.modelId ??
+      model.model_id ??
+      model.model ??
+      model.name ??
+      model.value ??
+      model.slug ??
+      model.key;
+    if (!id) return null;
+    const label =
+      model.displayName ??
+      model.label ??
+      model.title ??
+      model.name ??
+      model.modelId ??
+      String(id);
+    return {
+      id: String(id),
+      label: String(label),
+      description: model.description ? String(model.description) : undefined,
+    };
+  }
+  return null;
+};
+
 const nextBudgetLevel = (
   current: ThinkingBudgetLevel,
   levels: ThinkingBudgetLevel[]
@@ -654,14 +781,6 @@ const nextBudgetLevel = (
   const idx = levels.indexOf(current);
   const next = levels[(idx + 1) % levels.length];
   return next ?? levels[0] ?? current;
-};
-
-const safeReadLocalStorage = (key: string): string | null => {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
 };
 
 const AcpChatInterface: React.FC<Props> = ({
@@ -701,21 +820,19 @@ const AcpChatInterface: React.FC<Props> = ({
     audio?: boolean;
     embeddedContext?: boolean;
   }>({});
-  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
-    return chatModelSelections.get(task.id) || DEFAULT_MODEL_ID;
-  });
-
-  // Sync model selection when switching chats
-  // (useState initializer only runs on first mount, not when task.id changes)
-  useEffect(() => {
-    const savedModel = chatModelSelections.get(task.id);
-    setSelectedModelId(savedModel || DEFAULT_MODEL_ID);
-  }, [task.id]);
-
-  const [planModeEnabled, setPlanModeEnabled] = useState(false);
+  const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
+  const { enabled: planModeEnabled, setEnabled: setPlanModeEnabled } = usePlanMode(
+    task.id,
+    task.path
+  );
+  const [planModePromptSent, setPlanModePromptSent] = useState(false);
+  const [lastUserPlanModeSent, setLastUserPlanModeSent] = useState(false);
+  const [planBannerDismissed, setPlanBannerDismissed] = useState(false);
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
   const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
+  const [models, setModels] = useState<AcpModel[]>([]);
+  const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -732,11 +849,14 @@ const AcpChatInterface: React.FC<Props> = ({
   const savedMessageIdsRef = useRef<Set<string>>(new Set());
   const savedToolCallIdsRef = useRef<Set<string>>(new Set());
   const lastSavedPlanHashRef = useRef<string | null>(null);
-  const pendingThinkingBudgetRef = useRef<ThinkingBudgetLevel | null>(null);
-  const prevProviderRef = useRef<Provider | null>(null);
+  const persistedModelRef = useRef<string | null>(null);
 
   const acpConversationId = useMemo(() => `conv-${task.id}-acp`, [task.id]);
-  const thinkingStorageKey = useMemo(() => `acp:thinking:${acpConversationId}`, [acpConversationId]);
+  const modelStorageKey = useMemo(() => `acp:model:${acpConversationId}`, [acpConversationId]);
+  const thinkingStorageKey = useMemo(
+    () => `acp:thinking:${acpConversationId}`,
+    [acpConversationId]
+  );
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
@@ -746,15 +866,20 @@ const AcpChatInterface: React.FC<Props> = ({
     setExpandedItems((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const handleConfigUpdates = useCallback((payload: any) => {
+  const handleConfigAndModelUpdates = useCallback((payload: any) => {
     if (!payload) return;
-    const nextOptions = Array.isArray(payload.configOptions)
-      ? payload.configOptions
-      : Array.isArray(payload.config_options)
-        ? payload.config_options
-        : null;
-    if (nextOptions) {
-      setConfigOptions(nextOptions);
+    if (Array.isArray(payload.configOptions)) {
+      setConfigOptions(payload.configOptions);
+    } else if (Array.isArray(payload.config_options)) {
+      setConfigOptions(payload.config_options);
+    }
+    const nextModels = extractModelsFromPayload(payload);
+    if (nextModels.length) {
+      setModels(nextModels);
+    }
+    const nextCurrentModelId = extractCurrentModelId(payload);
+    if (nextCurrentModelId) {
+      setCurrentModelId(nextCurrentModelId);
     }
   }, []);
 
@@ -783,7 +908,11 @@ const AcpChatInterface: React.FC<Props> = ({
   }, []);
 
   const readLocalStorage = useCallback((key: string) => {
-    return safeReadLocalStorage(key);
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
   }, []);
 
   const writeLocalStorage = useCallback((key: string, value: string | null | undefined) => {
@@ -793,26 +922,14 @@ const AcpChatInterface: React.FC<Props> = ({
     } catch {}
   }, []);
 
-  useLayoutEffect(() => {
-    pendingThinkingBudgetRef.current = null;
-
-    const cachedBudget = chatThinkingBudgetSelections.get(task.id);
-    if (cachedBudget) {
-      setThinkingBudget(cachedBudget);
-      pendingThinkingBudgetRef.current = cachedBudget;
-      return;
-    }
-
+  useEffect(() => {
     const storedBudget = readLocalStorage(thinkingStorageKey);
     if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
       setThinkingBudget(storedBudget);
-      pendingThinkingBudgetRef.current = storedBudget;
-      chatThinkingBudgetSelections.set(task.id, storedBudget);
       return;
     }
-
     setThinkingBudget(DEFAULT_THINKING_BUDGET);
-  }, [provider, readLocalStorage, task.id, thinkingStorageKey]);
+  }, [readLocalStorage, thinkingStorageKey]);
 
   const sanitizeBlocks = useCallback((blocks: ContentBlock[]) => {
     const sanitized: ContentBlock[] = [];
@@ -1225,11 +1342,21 @@ const AcpChatInterface: React.FC<Props> = ({
 
   useEffect(() => {
     setAgentId(String(provider || 'codex'));
-    if (prevProviderRef.current && prevProviderRef.current !== provider) {
-      setConfigOptions([]);
-    }
-    prevProviderRef.current = provider;
   }, [provider]);
+
+  useEffect(() => {
+    if (!planModeEnabled) {
+      setPlanModePromptSent(false);
+      setLastUserPlanModeSent(false);
+    }
+  }, [planModeEnabled]);
+
+  useEffect(() => {
+    if (sessionId) {
+      setPlanModePromptSent(false);
+      setLastUserPlanModeSent(false);
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1268,6 +1395,13 @@ const AcpChatInterface: React.FC<Props> = ({
             setPlan(hydrated.latestPlan.entries);
             lastSavedPlanHashRef.current = JSON.stringify(hydrated.latestPlan.entries);
           }
+          const hasHistoryMessages = hydrated.feedItems.some((item) => item.type === 'message');
+          if (hasHistoryMessages) {
+            const storedModel = readLocalStorage(modelStorageKey);
+            if (storedModel) {
+              setModelId(storedModel);
+            }
+          }
         }
       } catch (error) {
         uiLog('hydrateHistory:error', error);
@@ -1281,13 +1415,16 @@ const AcpChatInterface: React.FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [acpConversationId, hydrateAcpHistory, task.id, uiLog]);
+  }, [acpConversationId, hydrateAcpHistory, task.id, uiLog, modelStorageKey, readLocalStorage]);
 
   useEffect(() => {
     if (!historyReady) return;
     let cancelled = false;
     (async () => {
       setSessionError(null);
+      setConfigOptions([]);
+      setModels([]);
+      setCurrentModelId(null);
       uiLog('startSession', { taskId: task.id, provider, cwd: task.path });
       const res = await window.electronAPI.acpStartSession({
         taskId: task.id,
@@ -1437,13 +1574,15 @@ const AcpChatInterface: React.FC<Props> = ({
         if (caps) {
           setPromptCaps(normalizePromptCaps(caps));
         }
-        handleConfigUpdates(payload);
+        handleConfigAndModelUpdates(payload);
         uiLog('session_started:config', {
           configOptions: Array.isArray(payload.configOptions)
             ? payload.configOptions.length
             : Array.isArray(payload.config_options)
               ? payload.config_options.length
               : 0,
+          models: extractModelsFromPayload(payload).length,
+          currentModelId: extractCurrentModelId(payload),
         });
         return;
       }
@@ -1536,7 +1675,7 @@ const AcpChatInterface: React.FC<Props> = ({
           (update.sessionUpdate as string) || (update.type as string) || (update.kind as string);
         if (!updateType) return;
         uiLog('session_update', { updateType, update });
-        handleConfigUpdates(update);
+        handleConfigAndModelUpdates(update);
         if (updateType === 'config_option_update' || updateType === 'config_options_update' || updateType === 'model_update') {
           return;
         }
@@ -1644,7 +1783,7 @@ const AcpChatInterface: React.FC<Props> = ({
     return () => {
       off?.();
     };
-  }, [task.id, uiLog, handleConfigUpdates, maybePersistPlan, ensureFeedMeta]);
+  }, [task.id, uiLog, handleConfigAndModelUpdates, maybePersistPlan, ensureFeedMeta]);
 
   useEffect(() => {
     if (hydratingRef.current) return;
@@ -1749,16 +1888,50 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!sessionId) return;
     if (!trimmed && attachments.length === 0) return;
     setInput('');
-    const promptBlocks = buildPromptBlocks(trimmed);
-    appendMessage('user', promptBlocks);
+    setLastUserPlanModeSent(planModeEnabled);
+    const includePlanInstruction = planModeEnabled && !planModePromptSent;
+    const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, includePlanInstruction);
+    appendMessage('user', promptBlocks.display);
+    if (includePlanInstruction) setPlanModePromptSent(true);
     setAttachments([]);
     lastAssistantMessageIdRef.current = null;
     setRunElapsedMs(0);
     setIsRunning(true);
-    uiLog('sendPrompt', { sessionId, blocks: promptBlocks });
+    uiLog('sendPrompt', { sessionId, blocks: promptBlocks.agent, planModeEnabled });
     const res = await window.electronAPI.acpSendPrompt({
       sessionId,
-      prompt: promptBlocks,
+      prompt: promptBlocks.agent,
+    });
+    uiLog('sendPrompt:response', res);
+    if (!res?.success) {
+      setSessionError(res?.error || 'Failed to send prompt.');
+      setIsRunning(false);
+      runStartedAtRef.current = null;
+      setRunElapsedMs(0);
+    }
+  };
+
+  const handleApprovePlan = async () => {
+    if (!planModeEnabled || !lastUserPlanModeSent) return;
+    const approvedText = 'approved';
+    if (!sessionId || isRunning) {
+      setPlanModeEnabled(false);
+      return;
+    }
+    try {
+      await logPlanEvent(task.path, 'Plan approved via UI; exiting Plan Mode');
+    } catch {}
+    setPlanModeEnabled(false);
+    const promptBlocks = buildPromptBlocks(approvedText, false, false, []);
+    appendMessage('user', promptBlocks.display);
+    runStartedAtRef.current = Date.now();
+    lastAssistantMessageIdRef.current = null;
+    setRunElapsedMs(0);
+    setIsRunning(true);
+    uiLog('sendPrompt', { sessionId, blocks: promptBlocks.agent, planModeEnabled: false });
+    const res = await window.electronAPI.acpSendPrompt({
+      sessionId,
+      prompt: promptBlocks.agent,
     });
     uiLog('sendPrompt:response', res);
     if (!res?.success) {
@@ -1873,22 +2046,59 @@ const AcpChatInterface: React.FC<Props> = ({
     }
   };
 
-  const buildPromptBlocks = (text: string): ContentBlock[] => {
-    const blocks: ContentBlock[] = [];
+  // Plan mode prompt constants
+  const PLAN_MODE_FULL_INSTRUCTION = `SYSTEM: PLAN MODE (READ-ONLY)
+
+You are in PLAN MODE. Your job is to research, analyze, and propose a plan. You must not take any action that changes the user's machine or repo.
+
+## Allowed (read-only)
+- Read files and inspect code, project structure, and dependencies
+- Search the codebase (e.g. rg/grep) and analyze behavior
+- Browse the internet / external documentation for reference
+- Run strictly read-only commands that only output information (e.g. ls, cat, rg/grep, git status/log/diff)
+- Ask clarifying questions and outline implementation steps
+
+## Not allowed (no changes)
+- Write/modify/delete any files (including patches, formatters, generators, or creating new files)
+- Run commands that might change state or write to disk (e.g. npm install, build steps that emit artifacts, tests that write snapshots/caches, git commit/push/checkout/reset/clean, rm/mv)
+- Change configuration, environment variables, system settings, or external services
+
+## Command safety rule
+- If you are not 100% sure a command is read-only, do not run it. Propose it for after approval instead.
+
+## Output expectations
+- Provide a concrete, numbered plan including which files you would change and how you would validate the result after approval
+- Call out assumptions, risks, and any information you still need from the user
+
+Stay in plan mode until the user explicitly approves execution (for example by turning plan mode off).
+
+You may optionally share your plan structure using the ACP plan protocol (session/update with type="plan").`;
+
+  const PLAN_MODE_REMINDER =
+    'REMINDER: Plan mode is still active (read-only). Continue researching and planning. Do not make any changes until the user approves execution (e.g. turns plan mode off).';
+
+  const buildPromptBlocks = (
+    text: string,
+    planMode: boolean,
+    includePlanInstruction: boolean,
+    overrideAttachments?: Attachment[]
+  ): { display: ContentBlock[]; agent: ContentBlock[] } => {
+    const contentBlocks: ContentBlock[] = [];
     const supportsImage = Boolean(promptCaps.image);
     const supportsAudio = Boolean(promptCaps.audio);
     const supportsEmbedded = Boolean(promptCaps.embeddedContext);
-    attachments.forEach((att) => {
+    const activeAttachments = overrideAttachments ?? attachments;
+    activeAttachments.forEach((att) => {
       if (att.kind === 'image' && att.data && supportsImage) {
-        blocks.push({ type: 'image', mimeType: att.mimeType, data: att.data });
+        contentBlocks.push({ type: 'image', mimeType: att.mimeType, data: att.data });
         return;
       }
       if (att.kind === 'audio' && att.data && supportsAudio) {
-        blocks.push({ type: 'audio', mimeType: att.mimeType, data: att.data });
+        contentBlocks.push({ type: 'audio', mimeType: att.mimeType, data: att.data });
         return;
       }
       if (att.textContent && supportsEmbedded && att.path) {
-        blocks.push({
+        contentBlocks.push({
           type: 'resource',
           resource: {
             uri: toFileUri(att.path),
@@ -1899,7 +2109,7 @@ const AcpChatInterface: React.FC<Props> = ({
         return;
       }
       if (att.path) {
-        blocks.push({
+        contentBlocks.push({
           type: 'resource_link',
           uri: toFileUri(att.path),
           name: att.name,
@@ -1910,9 +2120,19 @@ const AcpChatInterface: React.FC<Props> = ({
       }
     });
     if (text) {
-      blocks.push({ type: 'text', text });
+      contentBlocks.push({ type: 'text', text });
     }
-    return blocks;
+
+    const displayBlocks = [...contentBlocks];
+
+    const agentBlocks: ContentBlock[] = [];
+    if (planMode) {
+      if (includePlanInstruction) agentBlocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
+      else agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
+    }
+    agentBlocks.push(...contentBlocks);
+
+    return { display: displayBlocks, agent: agentBlocks };
   };
 
   const removeAttachment = (id: string) => {
@@ -1952,9 +2172,93 @@ const AcpChatInterface: React.FC<Props> = ({
   const showBottomLoading = isRunning && !latestToolCallId;
 
   const canSend = input.trim().length > 0 || attachments.length > 0;
-  // Model selection is now hardcoded - no complex derivation needed
-  const canSelectModel = ACP_MODELS.length > 0;
+  const modelConfigOption = useMemo(
+    () => findModelConfigOption(configOptions),
+    [configOptions]
+  );
+  const modelConfigId = useMemo(
+    () => getConfigOptionId(modelConfigOption),
+    [modelConfigOption]
+  );
+  const modelConfigChoices = useMemo(
+    () => extractConfigChoices(modelConfigOption),
+    [modelConfigOption]
+  );
+  const configModelValue = useMemo(
+    () => getConfigOptionValue(modelConfigOption),
+    [modelConfigOption]
+  );
+  const configModelId =
+    configModelValue !== null && configModelValue !== undefined
+      ? String(configModelValue)
+      : null;
+  const rawModelVariants = useMemo<ModelOption[]>(() => {
+    if (modelConfigChoices.length) {
+      return modelConfigChoices
+        .map((choice) => {
+          if (choice.value === undefined || choice.value === null) return null;
+          return {
+            id: String(choice.value),
+            label: choice.label ?? choice.name ?? String(choice.value),
+            description: choice.description,
+          };
+        })
+        .filter(Boolean) as ModelOption[];
+    }
+    return models.map(normalizeModelOption).filter(Boolean) as ModelOption[];
+  }, [modelConfigChoices, models]);
 
+  const modelCatalog = useMemo(() => {
+    const map = new Map<
+      string,
+      { baseId: string; label: string; description?: string; variants: ModelVariant[]; efforts: Set<string> }
+    >();
+    for (const variant of rawModelVariants) {
+      const parts = splitModelId(variant.id, variant.label);
+      const baseId = parts.baseId || variant.id;
+      const baseLabel = stripEffortSuffix(variant.label) ?? baseId;
+      const formattedLabel = formatModelLabel(baseLabel);
+      const entry =
+        map.get(baseId) ?? {
+          baseId,
+          label: formattedLabel,
+          description: variant.description,
+          variants: [],
+          efforts: new Set<string>(),
+        };
+      entry.variants.push({ ...variant, baseId, effort: parts.effort });
+      if (parts.effort) entry.efforts.add(parts.effort);
+      if (!entry.label && formattedLabel) entry.label = formattedLabel;
+      map.set(baseId, entry);
+    }
+    return map;
+  }, [rawModelVariants]);
+
+  const modelOptions = useMemo<ModelOption[]>(() => {
+    return Array.from(modelCatalog.values()).map((entry) => ({
+      id: entry.baseId,
+      label: entry.label,
+      description: entry.description,
+    }));
+  }, [modelCatalog]);
+
+  const rawSelectedModelId =
+    configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
+  const selectedModelParts = splitModelId(rawSelectedModelId, null);
+  const selectedBaseId =
+    (selectedModelParts.baseId && modelCatalog.has(selectedModelParts.baseId)
+      ? selectedModelParts.baseId
+      : modelOptions[0]?.id) ?? '';
+  const selectedModelEntry = selectedBaseId ? modelCatalog.get(selectedBaseId) : undefined;
+  const selectedEfforts = selectedModelEntry?.efforts;
+  const currentEffort = selectedModelParts.effort;
+  const fallbackModelId = selectedBaseId || modelId;
+  const resolvedModelValue = modelOptions.some((option) => option.id === fallbackModelId)
+    ? fallbackModelId
+    : undefined;
+  const persistedModelValue =
+    resolvedModelValue || selectedBaseId || modelId || currentModelId || '';
+  const canSetModel = Boolean(sessionId) && (Boolean(modelConfigId) || modelOptions.length > 0);
   const thinkingConfigOption = useMemo(
     () => findThinkingConfigOption(configOptions),
     [configOptions]
@@ -1971,21 +2275,27 @@ const AcpChatInterface: React.FC<Props> = ({
     () => getBudgetFromConfig(thinkingConfigOption),
     [thinkingConfigOption]
   );
+  const modelDrivenBudget = useMemo(
+    () => budgetFromEffort(currentEffort),
+    [currentEffort]
+  );
   const fallbackThinkingConfigId = provider === 'codex' ? 'model_reasoning_effort' : null;
   const availableBudgetLevels = useMemo(() => {
-    let levels: ThinkingBudgetLevel[];
     if (thinkingConfigMapping.availableLevels.size) {
-      levels = EFFORT_ORDER.filter((level) => thinkingConfigMapping.availableLevels.has(level));
-    } else {
-      levels = ['low', 'medium', 'high'] as ThinkingBudgetLevel[];
+      return EFFORT_ORDER.filter((level) => thinkingConfigMapping.availableLevels.has(level));
     }
-    if (!sessionId && thinkingBudget && !levels.includes(thinkingBudget)) {
-      levels = [...levels, thinkingBudget];
+    if (selectedEfforts?.size) {
+      const normalized = new Set(
+        Array.from(selectedEfforts)
+          .map((entry) => normalizeEffort(entry))
+          .filter(Boolean) as ThinkingBudgetLevel[]
+      );
+      return EFFORT_ORDER.filter((level) => normalized.has(level));
     }
-    return levels;
-  }, [sessionId, thinkingBudget, thinkingConfigMapping.availableLevels]);
+    return ['low', 'medium', 'high'] as ThinkingBudgetLevel[];
+  }, [selectedEfforts, thinkingConfigMapping.availableLevels]);
   const resolvedBudget: ThinkingBudgetLevel =
-    configDrivenBudget ?? thinkingBudget ?? availableBudgetLevels[0] ?? 'medium';
+    configDrivenBudget ?? modelDrivenBudget ?? thinkingBudget ?? availableBudgetLevels[0] ?? 'medium';
   const activeBudgetLevel = availableBudgetLevels.includes(resolvedBudget)
     ? resolvedBudget
     : availableBudgetLevels[0] ?? 'medium';
@@ -1995,120 +2305,163 @@ const AcpChatInterface: React.FC<Props> = ({
   const dotSize = dotCount >= 4 ? 3 : 4;
   const dotGap = dotCount >= 4 ? 2 : 3;
   const canSetThinkingBudget =
-    Boolean(sessionId) && (Boolean(thinkingConfigId) || Boolean(fallbackThinkingConfigId));
+    Boolean(sessionId) &&
+    (Boolean(thinkingConfigId) || Boolean(selectedModelEntry?.variants.length) || Boolean(fallbackThinkingConfigId));
 
   const handleModelChange = useCallback(
-    (modelId: string) => {
-      setSelectedModelId(modelId);
-      chatModelSelections.set(task.id, modelId);
+    (value: string) => {
+      setModelId(value);
+      writeLocalStorage(modelStorageKey, value);
+      if (!sessionId || !canSetModel) return;
 
-      if (sessionId) {
-        void window.electronAPI.acpSetModel?.({ sessionId, modelId }).then((res) => {
-          if (!res?.success) {
-            uiLog('model:setFailed', { modelId, error: res?.error });
-          }
-        });
-      }
-    },
-    [sessionId, task.id, uiLog]
-  );
+      const entry = modelCatalog.get(value);
+      const availableEfforts = entry?.efforts ?? new Set<string>();
+      const preferredEffort =
+        (activeBudgetLevel && chooseEffortForBudget(activeBudgetLevel, availableEfforts)) ||
+        currentEffort;
+      const targetVariant =
+        entry?.variants.find((variant) => variant.effort === preferredEffort) ??
+        entry?.variants[0];
+      const targetModelId = targetVariant?.id ?? value;
 
-  // Apply model to session when session becomes available
-  useEffect(() => {
-    if (!sessionId) return;
-    void window.electronAPI.acpSetModel?.({ sessionId, modelId: selectedModelId });
-  }, [sessionId, selectedModelId]);
-
-  const applyThinkingBudget = useCallback(
-    (next: ThinkingBudgetLevel) => {
-      if (!canSetThinkingBudget || !sessionId) return;
-      if (thinkingConfigId) {
-        const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
-        const targetValue = targetChoice?.value ?? next;
-        if (targetValue === undefined) {
-          uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
-          return;
-        }
-        if (targetChoice) {
-          setConfigOptions((prev) =>
-            prev.map((option) =>
-              getConfigOptionId(option) === thinkingConfigId
-                ? { ...option, value: targetChoice.value, currentValue: targetChoice.value }
-                : option
-            )
-          );
-        }
+      if (modelConfigId) {
+        const choice = modelConfigChoices.find((item) => String(item.value) === targetModelId);
+        const targetValue = choice?.value ?? targetModelId;
+        setConfigOptions((prev) =>
+          prev.map((option) =>
+            getConfigOptionId(option) === modelConfigId
+              ? { ...option, value: targetValue, currentValue: targetValue }
+              : option
+          )
+        );
         void window.electronAPI.acpSetConfigOption?.({
           sessionId,
-          configId: thinkingConfigId,
+          configId: modelConfigId,
           value: targetValue,
         }).then((res) => {
           if (!res?.success) {
-            uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
+            uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
           }
         });
         return;
       }
 
-      const configId = fallbackThinkingConfigId;
-      if (!configId) return;
-      const targetValue = next;
-      void window.electronAPI.acpSetConfigOption?.({
+      setCurrentModelId(targetModelId);
+      void window.electronAPI.acpSetModel?.({
         sessionId,
-        configId,
-        value: targetValue,
+        modelId: targetModelId,
       }).then((res) => {
         if (!res?.success) {
-          uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
+          uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
         }
       });
     },
     [
-      canSetThinkingBudget,
-      fallbackThinkingConfigId,
+      activeBudgetLevel,
+      canSetModel,
+      currentEffort,
+      modelStorageKey,
+      modelCatalog,
+      modelConfigChoices,
+      modelConfigId,
       sessionId,
-      thinkingConfigId,
-      thinkingConfigMapping.budgetToChoice,
       uiLog,
+      writeLocalStorage,
     ]
   );
+
+  useEffect(() => {
+    if (persistedModelValue) {
+      persistedModelRef.current = persistedModelValue;
+    }
+  }, [persistedModelValue]);
+
+  useEffect(() => {
+    return () => {
+      if (savedMessageIdsRef.current.size === 0) return;
+      const value = persistedModelRef.current;
+      if (!value) return;
+      writeLocalStorage(modelStorageKey, value);
+    };
+  }, [modelStorageKey, writeLocalStorage]);
 
   const handleThinkingBudgetClick = useCallback(() => {
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
     setThinkingBudget(next);
-    chatThinkingBudgetSelections.set(task.id, next);
     writeLocalStorage(thinkingStorageKey, next);
-    if (!canSetThinkingBudget || !sessionId) {
-      pendingThinkingBudgetRef.current = next;
+
+    if (!canSetThinkingBudget || !sessionId) return;
+    if (thinkingConfigId) {
+      const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
+      const targetValue = targetChoice?.value ?? next;
+      if (targetValue === undefined) {
+        uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
+        return;
+      }
+      if (targetChoice) {
+        setConfigOptions((prev) =>
+          prev.map((option) =>
+            getConfigOptionId(option) === thinkingConfigId
+              ? { ...option, value: targetChoice.value, currentValue: targetChoice.value }
+              : option
+          )
+        );
+      }
+      void window.electronAPI.acpSetConfigOption?.({
+        sessionId,
+        configId: thinkingConfigId,
+        value: targetValue,
+      }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
+        }
+      });
       return;
     }
-    applyThinkingBudget(next);
+
+    if (selectedModelEntry && selectedModelEntry.variants.length) {
+      const desiredEffort = chooseEffortForBudget(next, selectedModelEntry.efforts);
+      const targetVariant =
+        selectedModelEntry.variants.find((variant) => variant.effort === desiredEffort) ??
+        selectedModelEntry.variants[0];
+      if (!targetVariant) return;
+      setCurrentModelId(targetVariant.id);
+      void window.electronAPI.acpSetModel?.({
+        sessionId,
+        modelId: targetVariant.id,
+      }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
+        }
+      });
+      return;
+    }
+
+    const configId = fallbackThinkingConfigId;
+    if (!configId) return;
+    const targetValue = next;
+    void window.electronAPI.acpSetConfigOption?.({
+      sessionId,
+      configId,
+      value: targetValue,
+    }).then((res) => {
+      if (!res?.success) {
+        uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
+      }
+    });
   }, [
     activeBudgetLevel,
-    availableBudgetLevels,
-    applyThinkingBudget,
     canSetThinkingBudget,
+    fallbackThinkingConfigId,
+    availableBudgetLevels,
     sessionId,
-    task.id,
+    thinkingConfigId,
+    thinkingConfigMapping.budgetToChoice,
     thinkingStorageKey,
+    selectedModelEntry,
+    uiLog,
     writeLocalStorage,
   ]);
-
-  useEffect(() => {
-    const pending = pendingThinkingBudgetRef.current;
-    if (!pending) return;
-    if (!canSetThinkingBudget || !sessionId) return;
-    const target = availableBudgetLevels.includes(pending) ? pending : activeBudgetLevel;
-    pendingThinkingBudgetRef.current = null;
-    applyThinkingBudget(target);
-  }, [activeBudgetLevel, availableBudgetLevels, applyThinkingBudget, canSetThinkingBudget, sessionId]);
-
-  const canAdjustThinkingBudget = availableBudgetLevels.length > 0;
-  const thinkingBudgetTitle = sessionId
-    ? canSetThinkingBudget
-      ? `Thinking budget: ${activeBudgetLabel}`
-      : `Thinking budget: ${activeBudgetLabel} (not supported)`
-    : `Thinking budget: ${activeBudgetLabel} (syncing)`;
 
   const handleCopyMessage = useCallback(
     async (messageId: string, text: string) => {
@@ -2730,7 +3083,13 @@ const AcpChatInterface: React.FC<Props> = ({
   };
 
   return (
-    <div className={`flex h-full flex-col bg-white dark:bg-gray-900 ${className || ''}`}>
+    <div
+      className={cn(
+        "flex h-full flex-col bg-white dark:bg-gray-900 transition-colors duration-300",
+        planModeEnabled && "bg-sky-50/30 dark:bg-sky-950/20",
+        className || ''
+      )}
+    >
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="px-6">
           <div className="mx-auto max-w-4xl space-y-2">
@@ -2781,6 +3140,43 @@ const AcpChatInterface: React.FC<Props> = ({
             </div>
           </div>
         ) : null}
+
+        {/* Plan Mode Info Banner */}
+        <AnimatePresence initial={false}>
+          {planModeEnabled && !planBannerDismissed && (
+            <motion.div
+              initial={{ opacity: 0, height: 0, marginTop: 0 }}
+              animate={{ opacity: 1, height: 'auto', marginTop: '0.75rem' }}
+              exit={{ opacity: 0, height: 0, marginTop: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              className="px-6"
+            >
+              <div className="mx-auto max-w-4xl">
+                <div className="flex items-start gap-3 rounded-md border border-sky-200/60 bg-sky-50/80 px-3 py-2.5 text-xs shadow-sm dark:border-sky-700/40 dark:bg-sky-950/40">
+                  <div className="mt-0.5 flex-shrink-0">
+                    <svg className="h-4 w-4 text-sky-600 dark:text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <div className="font-semibold text-sky-900 dark:text-sky-100">Plan Mode Active</div>
+                    <div className="mt-0.5 text-sky-700 dark:text-sky-300">
+                      Ask questions and explore changes. When ready, approve the plan to apply modifications.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPlanBannerDismissed(true)}
+                    className="flex-shrink-0 rounded-sm p-0.5 text-sky-600 hover:bg-sky-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 dark:text-sky-400 dark:hover:bg-sky-800/50"
+                    aria-label="Dismiss plan mode banner"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-6">
           <div className="mx-auto flex max-w-4xl flex-col gap-3 pb-8">
@@ -2898,7 +3294,30 @@ const AcpChatInterface: React.FC<Props> = ({
                 ))}
               </div>
             ) : null}
-            <div className="relative rounded-xl border border-border/60 bg-background/90 shadow-sm backdrop-blur-sm">
+            <div
+              className={cn(
+                "relative rounded-xl border shadow-sm backdrop-blur-sm transition-all duration-300",
+                "border-border/60 bg-background/90",
+                planModeEnabled && "border-sky-400/60 bg-sky-50/50 dark:border-sky-500/50 dark:bg-sky-950/30"
+              )}
+            >
+              {/* Plan Mode Badge - top-left overlay when active */}
+              <AnimatePresence initial={false}>
+                {planModeEnabled && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, x: -4 }}
+                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, x: -4 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute -top-2.5 left-4 z-10"
+                  >
+                    <Badge variant="outline" className="border-sky-300/60 bg-sky-50/90 text-sky-700 dark:border-sky-600/50 dark:bg-sky-950/80 dark:text-sky-300">
+                      <Clipboard className="h-3 w-3" aria-hidden="true" />
+                      <span>Plan Mode</span>
+                    </Badge>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               {sessionError ? (
                 <div className="absolute -top-16 left-4 right-4 z-10 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/95 px-3 py-2 text-xs text-destructive-foreground shadow-sm">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
@@ -2906,6 +3325,20 @@ const AcpChatInterface: React.FC<Props> = ({
                     <div className="font-semibold">ACP session failed</div>
                     <div>{sessionError}</div>
                   </div>
+                </div>
+              ) : null}
+              {planModeEnabled && lastUserPlanModeSent ? (
+                <div className="absolute -top-4 right-4 z-20">
+                  <button
+                    type="button"
+                    onClick={handleApprovePlan}
+                    disabled={isRunning}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground shadow-md hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Approve Plan & Exit"
+                  >
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Approve Plan</span>
+                  </button>
                 </div>
               ) : null}
               <input
@@ -2924,7 +3357,7 @@ const AcpChatInterface: React.FC<Props> = ({
                   ref={textareaRef}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
-                  placeholder="Ask to make changes..."
+                  placeholder={planModeEnabled ? "Ask questions or explore changes (Plan Mode)..." : "Ask to make changes..."}
                   rows={1}
                   className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-relaxed text-foreground selection:bg-primary/20 placeholder:text-muted-foreground focus:outline-none"
                   style={{ minHeight: '40px', maxHeight: '200px' }}
@@ -2973,20 +3406,27 @@ const AcpChatInterface: React.FC<Props> = ({
                     <OpenAIIcon className="h-3.5 w-3.5" />
                     <span>Codex</span>
                   </button>
-                  <Select value={selectedModelId} onValueChange={handleModelChange}>
+                  <Select value={resolvedModelValue} onValueChange={handleModelChange}>
                     <SelectTrigger
-                      disabled={!canSelectModel}
-                      title={sessionId ? 'Model' : 'Model (syncing)'}
+                      disabled={!canSetModel || modelOptions.length === 0}
                       className="h-8 w-auto rounded-md border border-border/60 bg-background/90 px-2.5 text-xs text-foreground shadow-sm"
                     >
-                      <SelectValue placeholder="Model" />
+                      <SelectValue
+                        placeholder={modelOptions.length ? 'Model' : 'Model (not supported)'}
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {ACP_MODELS.map((model) => (
-                        <SelectItem key={model.id} value={model.id}>
-                          {model.label}
+                      {modelOptions.length ? (
+                        modelOptions.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="__empty" disabled>
+                          No models available
                         </SelectItem>
-                      ))}
+                      )}
                     </SelectContent>
                   </Select>
                   <button
@@ -3005,9 +3445,13 @@ const AcpChatInterface: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={handleThinkingBudgetClick}
-                    title={thinkingBudgetTitle}
+                    title={
+                      canSetThinkingBudget
+                        ? `Thinking budget: ${activeBudgetLabel}`
+                        : `Thinking budget: ${activeBudgetLabel} (not supported)`
+                    }
                     aria-label={`Thinking budget: ${activeBudgetLabel}`}
-                    disabled={!canAdjustThinkingBudget}
+                    disabled={!canSetThinkingBudget}
                     className="flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
                   >
                     <Brain className="h-4 w-4" />
