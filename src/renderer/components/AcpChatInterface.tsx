@@ -969,7 +969,7 @@ const AcpChatInterface: React.FC<Props> = ({
       setIsPinnedToBottom(nearBottom);
     }
     if (nearBottom) {
-      setUnseenCount((prev) => (prev === 0 ? prev : 0));
+      setUnseenCount(0);
     }
   }, []);
 
