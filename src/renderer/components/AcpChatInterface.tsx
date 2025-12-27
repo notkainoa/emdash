@@ -203,6 +203,7 @@ const MAX_PERSISTED_TERMINAL_LINES = 120;
 const SESSION_ERROR_PREVIEW_LIMIT = 360;
 const SESSION_ERROR_PREVIEW_LINES = 4;
 const SESSION_ERROR_COPY_ID = 'acp-session-error';
+const SCROLL_BOTTOM_THRESHOLD = 80;
 
 const normalizeNewlines = (text: string) => text.replace(/\r\n/g, '\n');
 
@@ -825,8 +826,10 @@ const AcpChatInterface: React.FC<Props> = ({
     // eslint-disable-next-line no-console
     console.log('[acp-ui]', ...args);
   }, []);
+  const planBannerStorageKey = `acp:plan-banner-dismissed:conv-${task.id}-acp`;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionStarting, setSessionStarting] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [toolCalls, setToolCalls] = useState<Record<string, ToolCall>>({});
@@ -851,13 +854,17 @@ const AcpChatInterface: React.FC<Props> = ({
     embeddedContext?: boolean;
   }>({});
   const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
+  const [sessionRestartToken, setSessionRestartToken] = useState(0);
   const { enabled: planModeEnabled, setEnabled: setPlanModeEnabled } = usePlanMode(
     task.id,
     task.path
   );
   const [planModePromptSent, setPlanModePromptSent] = useState(false);
   const [lastUserPlanModeSent, setLastUserPlanModeSent] = useState(false);
-  const [planBannerDismissed, setPlanBannerDismissed] = useState(false);
+  const [planBannerDismissed, setPlanBannerDismissed] = useState(() => {
+    const stored = readLocalStorage(planBannerStorageKey);
+    return stored === '1';
+  });
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
   const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
@@ -871,6 +878,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const lastAssistantMessageIdRef = useRef<string | null>(null);
   const copyResetRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const hydratingRef = useRef(false);
@@ -881,6 +889,11 @@ const AcpChatInterface: React.FC<Props> = ({
   const lastSavedPlanHashRef = useRef<string | null>(null);
   const persistedModelRef = useRef<string | null>(null);
   const persistedThinkingBudgetRef = useRef<ThinkingBudgetLevel | null>(null);
+  const isPinnedToBottomRef = useRef(true);
+  const lastFeedLengthRef = useRef(0);
+  const forceScrollRef = useRef(false);
+  const [isPinnedToBottom, setIsPinnedToBottom] = useState(true);
+  const [unseenCount, setUnseenCount] = useState(0);
 
   const acpConversationId = useMemo(() => `conv-${task.id}-acp`, [task.id]);
   const modelStorageKey = useMemo(() => `acp:model:${acpConversationId}`, [acpConversationId]);
@@ -939,6 +952,25 @@ const AcpChatInterface: React.FC<Props> = ({
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
+    if (!isPinnedToBottomRef.current) {
+      isPinnedToBottomRef.current = true;
+      setIsPinnedToBottom(true);
+    }
+  }, []);
+
+  const updatePinnedState = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom =
+      container.scrollHeight - (container.scrollTop + container.clientHeight);
+    const nearBottom = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
+    if (nearBottom !== isPinnedToBottomRef.current) {
+      isPinnedToBottomRef.current = nearBottom;
+      setIsPinnedToBottom(nearBottom);
+    }
+    if (nearBottom) {
+      setUnseenCount((prev) => (prev === 0 ? prev : 0));
+    }
   }, []);
 
   // File mention autocomplete
@@ -1440,8 +1472,35 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [input]);
 
   useEffect(() => {
-    scrollToBottom('auto');
-  }, [feed.length, scrollToBottom]);
+    const container = scrollContainerRef.current;
+    const nextLength = feed.length;
+    const prevLength = lastFeedLengthRef.current;
+    lastFeedLengthRef.current = nextLength;
+    if (!container || nextLength === 0) {
+      if (nextLength === 0) {
+        setUnseenCount(0);
+      }
+      return;
+    }
+    const lastItem = feed[nextLength - 1];
+    const isUserMessage = lastItem?.type === 'message' && lastItem.role === 'user';
+    const shouldForce = forceScrollRef.current;
+    const shouldScroll = shouldForce || isPinnedToBottomRef.current || isUserMessage;
+
+    if (shouldScroll) {
+      forceScrollRef.current = false;
+      scrollToBottom('auto');
+      setUnseenCount(0);
+      return;
+    }
+    if (nextLength > prevLength) {
+      setUnseenCount((prev) => Math.max(0, prev + (nextLength - prevLength)));
+    }
+  }, [feed, scrollToBottom]);
+
+  useEffect(() => {
+    updatePinnedState();
+  }, [updatePinnedState, feed.length]);
 
   useEffect(() => {
     return () => {
@@ -1467,6 +1526,11 @@ const AcpChatInterface: React.FC<Props> = ({
   useEffect(() => {
     setAgentId(String(provider || 'codex'));
   }, [provider]);
+
+  useEffect(() => {
+    const stored = readLocalStorage(planBannerStorageKey);
+    setPlanBannerDismissed(stored === '1');
+  }, [planBannerStorageKey]);
 
   useEffect(() => {
     if (!planModeEnabled) {
@@ -1549,6 +1613,7 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!historyReady) return;
     let cancelled = false;
     (async () => {
+      setSessionStarting(true);
       setSessionError(null);
       setConfigOptions([]);
       setModels([]);
@@ -1564,14 +1629,18 @@ const AcpChatInterface: React.FC<Props> = ({
       if (!res?.success || !res.sessionId) {
         uiLog('startSession:failed', res);
         setSessionError(res?.error || 'Failed to start ACP session.');
+        if (!cancelled) setSessionStarting(false);
         return;
       }
-      setSessionId(res.sessionId);
+      if (!cancelled) {
+        setSessionId(res.sessionId);
+        setSessionStarting(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [historyReady, task.id, task.path, provider, uiLog]);
+  }, [historyReady, task.id, task.path, provider, uiLog, sessionRestartToken]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -1693,6 +1762,7 @@ const AcpChatInterface: React.FC<Props> = ({
       uiLog('event', payload);
       if (payload.type === 'session_started') {
         setSessionError(null);
+        setSessionStarting(false);
         if (payload.sessionId) {
           setSessionId(payload.sessionId);
         }
@@ -1718,6 +1788,7 @@ const AcpChatInterface: React.FC<Props> = ({
       if (payload.type === 'session_error') {
         uiLog('session_error', payload.error);
         setSessionError(payload.error || 'ACP session error');
+        setSessionStarting(false);
         setIsRunning(false);
         runStartedAtRef.current = null;
         return;
@@ -1726,6 +1797,8 @@ const AcpChatInterface: React.FC<Props> = ({
         uiLog('session_exit', payload);
         setIsRunning(false);
         runStartedAtRef.current = null;
+        setSessionId(null);
+        setSessionStarting(false);
         if (!sessionError) {
           setSessionError('ACP session ended.');
         }
@@ -2018,6 +2091,7 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!sessionId) return;
     if (!trimmed && attachments.length === 0) return;
     setInput('');
+    forceScrollRef.current = true;
     setLastUserPlanModeSent(planModeEnabled);
     const includePlanInstruction = planModeEnabled && !planModePromptSent;
     const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, includePlanInstruction);
@@ -2048,6 +2122,7 @@ const AcpChatInterface: React.FC<Props> = ({
       setPlanModeEnabled(false);
       return;
     }
+    forceScrollRef.current = true;
     try {
       await logPlanEvent(task.path, 'Plan approved via UI; exiting Plan Mode');
     } catch {}
@@ -2294,6 +2369,16 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     if (!sessionError) return '';
     return buildSessionErrorPreview(sessionError);
   }, [sessionError]);
+  const showJumpToLatest = !isPinnedToBottom && unseenCount > 0;
+
+  const handleJumpToLatest = useCallback(() => {
+    scrollToBottom('smooth');
+    setUnseenCount(0);
+  }, [scrollToBottom]);
+
+  const handleReconnect = useCallback(() => {
+    setSessionRestartToken((prev) => prev + 1);
+  }, []);
 
   const latestToolCallId = useMemo(() => {
     for (let i = feed.length - 1; i >= 0; i -= 1) {
@@ -3325,7 +3410,10 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                   </div>
                   <button
                     type="button"
-                    onClick={() => setPlanBannerDismissed(true)}
+                    onClick={() => {
+                      setPlanBannerDismissed(true);
+                      writeLocalStorage(planBannerStorageKey, '1');
+                    }}
                     className="flex-shrink-0 rounded-sm p-0.5 text-sky-600 hover:bg-sky-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 dark:text-sky-400 dark:hover:bg-sky-800/50"
                     aria-label="Dismiss plan mode banner"
                   >
@@ -3337,8 +3425,13 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
           )}
         </AnimatePresence>
 
-        <div className="mt-4 min-h-0 flex-1 overflow-y-auto px-6">
-          <div className="mx-auto flex max-w-4xl flex-col gap-3 pb-8">
+        <div className="relative mt-4 min-h-0 flex-1">
+          <div
+            ref={scrollContainerRef}
+            onScroll={updatePinnedState}
+            className="h-full overflow-y-auto px-6"
+          >
+            <div className="mx-auto flex max-w-4xl flex-col gap-3 pb-8">
             {(() => {
               const rendered: React.ReactNode[] = [];
               let buffer: FeedItem[] = [];
@@ -3429,41 +3522,58 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
             <div ref={bottomRef} />
           </div>
         </div>
+        {showJumpToLatest ? (
+          <div className="pointer-events-none absolute bottom-6 right-8 z-20">
+            <button
+              type="button"
+              onClick={handleJumpToLatest}
+              className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-md hover:bg-background"
+            >
+              Jump to latest
+              {unseenCount > 0 ? (
+                <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                  {unseenCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+        ) : null}
+      </div>
 
-        <div className="bg-transparent px-4 pb-4">
-          <div className="mx-auto max-w-4xl space-y-3">
-            {commandSuggestions.length ? (
-              <div className="rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
-                {commandSuggestions.map((cmd) => (
-                  <button
-                    key={cmd.name}
-                    type="button"
-                    className="flex w-full items-start gap-2 rounded px-2 py-1 text-left hover:bg-muted/40"
-                    onClick={() => setInput(`/${cmd.name} `)}
-                  >
-                    <span className="font-medium text-foreground">/{cmd.name}</span>
-                    {cmd.description ? (
-                      <span className="text-muted-foreground">{cmd.description}</span>
-                    ) : null}
-                    {cmd.hint ? (
-                      <span className="text-muted-foreground/70">- {cmd.hint}</span>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {fileMentions.active && (
-              <FileMentionDropdown
-                items={fileMentions.items}
-                query={fileMentions.query}
-                selectedIndex={fileMentions.selectedIndex}
-                onSelect={handleMentionDropdownSelect}
-                getDisplayName={fileMentions.getDisplayName}
-                anchorRect={caretPosition}
-                error={fileMentions.error}
-                loading={fileMentions.loading}
-              />
-            )}
+      <div className="bg-transparent px-4 pb-4">
+        <div className="mx-auto max-w-4xl space-y-3">
+          {commandSuggestions.length ? (
+            <div className="rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
+              {commandSuggestions.map((cmd) => (
+                <button
+                  key={cmd.name}
+                  type="button"
+                  className="flex w-full items-start gap-2 rounded px-2 py-1 text-left hover:bg-muted/40"
+                  onClick={() => setInput(`/${cmd.name} `)}
+                >
+                  <span className="font-medium text-foreground">/{cmd.name}</span>
+                  {cmd.description ? (
+                    <span className="text-muted-foreground">{cmd.description}</span>
+                  ) : null}
+                  {cmd.hint ? (
+                    <span className="text-muted-foreground/70">- {cmd.hint}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {fileMentions.active && (
+            <FileMentionDropdown
+              items={fileMentions.items}
+              query={fileMentions.query}
+              selectedIndex={fileMentions.selectedIndex}
+              onSelect={handleMentionDropdownSelect}
+              getDisplayName={fileMentions.getDisplayName}
+              anchorRect={caretPosition}
+              error={fileMentions.error}
+              loading={fileMentions.loading}
+            />
+          )}
             <div
               className={cn(
                 'relative rounded-xl border shadow-sm backdrop-blur-sm transition-all duration-300',
@@ -3499,6 +3609,21 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                     <div className="font-semibold">ACP session failed</div>
                     <div className="whitespace-pre-wrap break-words">{sessionErrorPreview}</div>
                     <div className="mt-1 flex items-center gap-2">
+                      {!sessionId ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive-foreground hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={handleReconnect}
+                          disabled={!historyReady}
+                          aria-label={
+                            historyReady
+                              ? 'Reconnect to ACP session'
+                              : 'Reconnect disabled - waiting for chat history to load'
+                          }
+                        >
+                          Reconnect
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive-foreground hover:bg-destructive/20"
@@ -3554,6 +3679,12 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                 }}
               />
               <div className="px-4 pt-4">
+                {sessionStarting && !sessionId ? (
+                  <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                    <Spinner size="sm" className="text-muted-foreground/70" aria-hidden="true" />
+                    <span>Connecting to ACP...</span>
+                  </div>
+                ) : null}
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -3728,7 +3859,13 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                     disabled={!sessionId || (isRunning ? false : !canSend)}
                     variant={isRunning ? 'secondary' : 'default'}
                   >
-                    {isRunning ? <Square className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+                    {isRunning ? (
+                      <Square className="h-4 w-4" />
+                    ) : sessionStarting && !sessionId ? (
+                      <Spinner size="sm" className="text-current" aria-hidden="true" />
+                    ) : (
+                      <ArrowUp className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
               </div>
