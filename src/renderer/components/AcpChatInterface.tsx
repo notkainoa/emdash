@@ -761,6 +761,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
   const { enabled: planModeEnabled, setEnabled: setPlanEnabled } = usePlanMode(task.id, task.path);
   const [initialPlanPromptSent, setInitialPlanPromptSent] = useState(false);
+  const [lastPromptWasFromPlanMode, setLastPromptWasFromPlanMode] = useState(false);
   const { toast } = useToast();
   const [thinkingBudget, setThinkingBudget] = useState<ThinkingBudgetLevel>('medium');
   const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
@@ -852,16 +853,6 @@ const AcpChatInterface: React.FC<Props> = ({
   useEffect(() => {
     log.info('[plan] state changed', { taskId: task.id, enabled: planModeEnabled });
   }, [planModeEnabled, task.id]);
-
-  // Show toast notification when plan mode is enabled
-  useEffect(() => {
-    if (planModeEnabled) {
-      toast({
-        title: "Plan Mode Enabled",
-        description: "Agent will analyze and create a plan. Use 'Approve Plan' button when ready to proceed.",
-      });
-    }
-  }, [planModeEnabled, toast]);
 
   // Sync plan mode state to ACP service (blocks file writes at service level)
   useEffect(() => {
@@ -1294,6 +1285,7 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!trimmed && attachments.length === 0) return;
     setInput('');
     const { display: displayBlocks, agent: agentBlocks } = buildPromptBlocks(trimmed, planModeEnabled, !initialPlanPromptSent && planModeEnabled);
+    setLastPromptWasFromPlanMode(planModeEnabled);
     // Show only user's message in UI (without plan mode instructions)
     appendMessage('user', displayBlocks);
     setAttachments([]);
@@ -2442,8 +2434,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
           </div>
         </div>
 
-        {/* Plan mode status banner */}
-        {planModeEnabled ? (
+        {/* Plan mode status banner - only shown when there's been a plan mode exchange */}
+        {planModeEnabled && lastPromptWasFromPlanMode ? (
           <div className="mx-auto max-w-4xl px-6 pt-4">
             <div className="flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
               <Clipboard className="h-4 w-4" />
@@ -2606,8 +2598,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                 ))}
               </div>
             ) : null}
-            {/* Approve Plan button - shown when plan mode is active, there's feed content, and agent is not running */}
-            {planModeEnabled && feed.length > 0 && !isRunning ? (
+            {/* Approve Plan button - shown when plan mode is active, last prompt was from plan mode, there's feed content, and agent is not running */}
+            {planModeEnabled && lastPromptWasFromPlanMode && feed.length > 0 && !isRunning ? (
               <div className="flex justify-end">
                 <TooltipProvider delayDuration={200}>
                   <Tooltip>
@@ -2618,6 +2610,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                           if (!sessionId) return;
                           // Exit plan mode (triggers file lock release, cleanup via usePlanMode)
                           setPlanEnabled(false);
+                          setLastPromptWasFromPlanMode(false);
                           // Send approval prompt to continue
                           const approvalPrompt = 'The plan is approved. Please proceed with implementation.';
                           const blocks = [{ type: 'text', text: approvalPrompt }];
