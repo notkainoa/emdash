@@ -826,7 +826,7 @@ const AcpChatInterface: React.FC<Props> = ({
     // eslint-disable-next-line no-console
     console.log('[acp-ui]', ...args);
   }, []);
-  const planBannerStorageKey = `acp:plan-banner-dismissed:conv-${task.id}-acp`;
+  const planBannerStorageKey = useMemo(() => `acp:plan-banner-dismissed:conv-${task.id}-acp`, [task.id]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionStarting, setSessionStarting] = useState(false);
