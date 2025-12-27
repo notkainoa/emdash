@@ -220,6 +220,21 @@ const formatDuration = (ms: number) => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 
+const readLocalStorage = (key: string) => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeLocalStorage = (key: string, value: string | null | undefined) => {
+  if (!value) return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+};
+
 const LoadingTimer: React.FC<{ label: string }> = ({ label }) => (
   <div className="flex items-center gap-2 text-xs text-muted-foreground">
     <Spinner size="sm" className="text-muted-foreground/70" aria-hidden="true" />
@@ -482,6 +497,8 @@ const EFFORT_LABELS: Record<ThinkingBudgetLevel, string> = {
   xhigh: 'Extra High',
 };
 const DEFAULT_THINKING_BUDGET: ThinkingBudgetLevel = 'medium';
+const isThinkingBudgetLevel = (value: string): value is ThinkingBudgetLevel =>
+  EFFORT_ORDER.includes(value as ThinkingBudgetLevel);
 
 const flattenConfigChoices = (choices: any[]): any[] => {
   const flat: any[] = [];
@@ -850,6 +867,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const savedToolCallIdsRef = useRef<Set<string>>(new Set());
   const lastSavedPlanHashRef = useRef<string | null>(null);
   const persistedModelRef = useRef<string | null>(null);
+  const persistedThinkingBudgetRef = useRef<ThinkingBudgetLevel | null>(null);
 
   const acpConversationId = useMemo(() => `conv-${task.id}-acp`, [task.id]);
   const modelStorageKey = useMemo(() => `acp:model:${acpConversationId}`, [acpConversationId]);
@@ -906,30 +924,6 @@ const AcpChatInterface: React.FC<Props> = ({
       return null;
     }
   }, []);
-
-  const readLocalStorage = useCallback((key: string) => {
-    try {
-      return window.localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const writeLocalStorage = useCallback((key: string, value: string | null | undefined) => {
-    if (!value) return;
-    try {
-      window.localStorage.setItem(key, value);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    const storedBudget = readLocalStorage(thinkingStorageKey);
-    if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
-      setThinkingBudget(storedBudget);
-      return;
-    }
-    setThinkingBudget(DEFAULT_THINKING_BUDGET);
-  }, [readLocalStorage, thinkingStorageKey]);
 
   const sanitizeBlocks = useCallback((blocks: ContentBlock[]) => {
     const sanitized: ContentBlock[] = [];
@@ -1401,6 +1395,10 @@ const AcpChatInterface: React.FC<Props> = ({
             if (storedModel) {
               setModelId(storedModel);
             }
+            const storedBudget = readLocalStorage(thinkingStorageKey);
+            if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
+              setThinkingBudget(storedBudget);
+            }
           }
         }
       } catch (error) {
@@ -1415,7 +1413,7 @@ const AcpChatInterface: React.FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [acpConversationId, hydrateAcpHistory, task.id, uiLog, modelStorageKey, readLocalStorage]);
+  }, [acpConversationId, hydrateAcpHistory, task.id, uiLog, modelStorageKey, thinkingStorageKey]);
 
   useEffect(() => {
     if (!historyReady) return;
@@ -2366,7 +2364,6 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       modelConfigId,
       sessionId,
       uiLog,
-      writeLocalStorage,
     ]
   );
 
@@ -2377,13 +2374,26 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   }, [persistedModelValue]);
 
   useEffect(() => {
+    persistedThinkingBudgetRef.current = activeBudgetLevel;
+  }, [activeBudgetLevel]);
+
+  useEffect(() => {
     return () => {
       if (savedMessageIdsRef.current.size === 0) return;
       const value = persistedModelRef.current;
       if (!value) return;
       writeLocalStorage(modelStorageKey, value);
     };
-  }, [modelStorageKey, writeLocalStorage]);
+  }, [modelStorageKey]);
+
+  useEffect(() => {
+    return () => {
+      if (savedMessageIdsRef.current.size === 0) return;
+      const value = persistedThinkingBudgetRef.current;
+      if (!value) return;
+      writeLocalStorage(thinkingStorageKey, value);
+    };
+  }, [thinkingStorageKey]);
 
   const handleThinkingBudgetClick = useCallback(() => {
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
@@ -2460,7 +2470,6 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     thinkingStorageKey,
     selectedModelEntry,
     uiLog,
-    writeLocalStorage,
   ]);
 
   const handleCopyMessage = useCallback(
