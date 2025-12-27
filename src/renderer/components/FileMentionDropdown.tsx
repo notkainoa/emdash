@@ -36,7 +36,6 @@ export const FileMentionDropdown: React.FC<FileMentionDropdownProps> = ({
     if (selectedElement) {
       selectedElement.scrollIntoView({
         block: 'nearest',
-        behavior: 'smooth',
       });
     }
   }, [selectedIndex]);

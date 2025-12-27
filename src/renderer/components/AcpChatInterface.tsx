@@ -771,6 +771,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentionDropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Track cursor position for mention detection
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -786,11 +787,14 @@ const AcpChatInterface: React.FC<Props> = ({
       const before = input.slice(0, startIndex);
       const after = input.slice(endIndex);
       const mention = `@${filePath}`;
-      setInput(before + mention + ' ' + after);
+      const needsTrailingSpace =
+        !filePath.endsWith('/') && (after.length === 0 || !/^\s/.test(after));
+      const suffix = needsTrailingSpace ? ' ' : '';
+      setInput(before + mention + suffix + after);
 
       // Move cursor to after the inserted mention
       setTimeout(() => {
-        const newCursorPos = startIndex + mention.length + 1;
+        const newCursorPos = startIndex + mention.length + suffix.length;
         textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos);
         setCursorPosition(newCursorPos);
         textareaRef.current?.focus();
@@ -816,13 +820,21 @@ const AcpChatInterface: React.FC<Props> = ({
 
   // Close dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = () => {
-      // Dropdown closes automatically when trigger becomes inactive
+    if (!fileMentions.active) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (textareaRef.current?.contains(target)) return;
+      if (mentionDropdownRef.current?.contains(target)) return;
+
+      // Close dropdown by invalidating the active trigger
+      setCursorPosition(0);
     };
 
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+  }, [fileMentions.active]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedItems((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -2556,13 +2568,15 @@ const AcpChatInterface: React.FC<Props> = ({
               </div>
             ) : null}
             {fileMentions.active && (
-              <FileMentionDropdown
-                items={fileMentions.items}
-                query={fileMentions.query}
-                selectedIndex={fileMentions.selectedIndex}
-                onSelect={handleMentionDropdownSelect}
-                getDisplayName={fileMentions.getDisplayName}
-              />
+              <div ref={mentionDropdownRef}>
+                <FileMentionDropdown
+                  items={fileMentions.items}
+                  query={fileMentions.query}
+                  selectedIndex={fileMentions.selectedIndex}
+                  onSelect={handleMentionDropdownSelect}
+                  getDisplayName={fileMentions.getDisplayName}
+                />
+              </div>
             )}
             <div className="relative rounded-xl border border-border/60 bg-background/90 shadow-sm backdrop-blur-sm">
               {sessionError ? (
@@ -2590,13 +2604,13 @@ const AcpChatInterface: React.FC<Props> = ({
                   ref={textareaRef}
                   value={input}
                   onChange={(event) => {
-                    setInput(event.target.value);
+                    setInput(event.currentTarget.value);
                     // Track cursor position for mention detection
-                    setCursorPosition(event.target.selectionStart || 0);
+                    setCursorPosition(event.currentTarget.selectionStart || 0);
                   }}
                   onSelect={(event) => {
                     // Update cursor position when user clicks or drags
-                    setCursorPosition(event.target.selectionStart || 0);
+                    setCursorPosition(event.currentTarget.selectionStart || 0);
                   }}
                   placeholder="Ask to make changes..."
                   rows={1}

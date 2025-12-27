@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFileIndex } from './useFileIndex';
 
 type Item = { path: string; type: 'file' | 'dir' };
@@ -22,7 +22,7 @@ type UseFileMentionsProps = {
  * Detect if the cursor is in a mention context.
  * Only triggers when @ is at start of word (after space or start of input).
  */
-function detectMentionTrigger(
+export function detectMentionTrigger(
   input: string,
   cursorPosition: number
 ): MentionState {
@@ -35,9 +35,9 @@ function detectMentionTrigger(
     return { active: false };
   }
 
-  // Calculate where the @ symbol starts
-  const startIndex = cursorPosition - match[0].length;
   const query = match[1] || '';
+  // Calculate where the @ symbol starts (avoid consuming the leading whitespace from match[0])
+  const startIndex = Math.max(0, cursorPosition - (query.length + 1));
 
   return { active: true, query, startIndex };
 }
@@ -47,51 +47,39 @@ function detectMentionTrigger(
  * - Empty query: show top-level items
  * - Path query: show items starting with that path
  */
-function filterByPath(items: Item[], query: string, limit = 100): Item[] {
-  if (!query) {
-    // Show top-level items only (no path separators)
-    return items
-      .filter((item) => !item.path.includes('/'))
-      .slice(0, limit);
-  }
+export function filterByPath(items: Item[], query: string, limit = 100): Item[] {
+  const normalizedQuery = query.replace(/\\/g, '/');
+  const lastSlash = normalizedQuery.lastIndexOf('/');
+  const dirPrefix = lastSlash >= 0 ? normalizedQuery.slice(0, lastSlash + 1) : '';
+  const namePrefix = lastSlash >= 0 ? normalizedQuery.slice(lastSlash + 1) : normalizedQuery;
 
-  const normalizedQuery = query.toLowerCase();
+  const dirPrefixLower = dirPrefix.toLowerCase();
+  const namePrefixLower = namePrefix.toLowerCase();
 
-  // Filter items that start with the query path
-  // For directories, also include their direct children
   const filtered = items.filter((item) => {
-    const itemPath = item.path.toLowerCase();
+    const itemPath = item.path.replace(/\\/g, '/');
+    const itemLower = itemPath.toLowerCase();
+    if (!itemLower.startsWith(dirPrefixLower)) return false;
 
-    // Exact prefix match
-    if (itemPath.startsWith(normalizedQuery)) {
-      // If query ends with /, show children (but not the directory itself unless it's a direct match)
-      if (normalizedQuery.endsWith('/')) {
-        return itemPath.startsWith(normalizedQuery);
-      }
-      // Otherwise show matches that either are the path itself or are prefixed by the path + /
-      return (
-        itemPath === normalizedQuery ||
-        itemPath.startsWith(normalizedQuery + '/')
-      );
-    }
+    const remainder = itemPath.slice(dirPrefix.length);
+    if (!remainder) return false;
 
-    return false;
+    // Only show direct children in the current "directory" prefix.
+    if (remainder.includes('/')) return false;
+
+    if (!namePrefixLower) return true;
+    return remainder.toLowerCase().startsWith(namePrefixLower);
   });
 
-  // Sort: directories first, then by path length, then alphabetically
+  // Sort: directories first, then alphabetically within the directory prefix.
   return filtered
     .sort((a, b) => {
-      // Directories first
       if (a.type === 'dir' && b.type !== 'dir') return -1;
       if (a.type !== 'dir' && b.type === 'dir') return 1;
 
-      // Then by path length (shorter first)
-      const aLen = a.path.length;
-      const bLen = b.path.length;
-      if (aLen !== bLen) return aLen - bLen;
-
-      // Then alphabetically
-      return a.path.localeCompare(b.path);
+      const aName = a.path.replace(/\\/g, '/').slice(dirPrefix.length);
+      const bName = b.path.replace(/\\/g, '/').slice(dirPrefix.length);
+      return aName.localeCompare(bName);
     })
     .slice(0, limit);
 }
@@ -100,18 +88,18 @@ function filterByPath(items: Item[], query: string, limit = 100): Item[] {
  * Get the display name for an item.
  * For nested paths, show just the last segment.
  */
-function getDisplayName(item: Item, query: string): string {
-  if (!query) return item.path;
+export function getDisplayName(item: Item, query: string): string {
+  const normalizedQuery = query.replace(/\\/g, '/');
+  const lastSlash = normalizedQuery.lastIndexOf('/');
+  const dirPrefix = lastSlash >= 0 ? normalizedQuery.slice(0, lastSlash + 1) : '';
+  if (!dirPrefix) return item.path;
 
-  // If query contains /, show the relative path from query
-  if (query.includes('/')) {
-    const base = query.endsWith('/') ? query : query + '/';
-    if (item.path.startsWith(base)) {
-      return item.path.slice(base.length);
-    }
+  const itemPath = item.path.replace(/\\/g, '/');
+  if (itemPath.toLowerCase().startsWith(dirPrefix.toLowerCase())) {
+    return itemPath.slice(dirPrefix.length);
   }
 
-  return item.path;
+  return itemPath;
 }
 
 /**
@@ -130,15 +118,16 @@ export function useFileMentions({
   rootPath,
   onSelect,
 }: UseFileMentionsProps) {
-  const { items, loading } = useFileIndex(rootPath);
-
-  const [selectedIndex, setSelectedIndex] = useState(0);
-
   // Detect mention trigger
   const trigger = useMemo<MentionState>(
     () => detectMentionTrigger(input, cursorPosition),
     [input, cursorPosition]
   );
+
+  // Lazy-load the file index only when the user is actively in a mention context.
+  const { items, loading } = useFileIndex(trigger.active ? rootPath : undefined);
+
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Filter items based on query
   const filteredItems = useMemo<Item[]>(() => {
@@ -146,7 +135,15 @@ export function useFileMentions({
     return filterByPath(items, trigger.query, 100);
   }, [items, trigger]);
 
-  // Reset selected index when filtered items change
+  const activeQuery = trigger.active ? trigger.query : null;
+
+  // Reset selected index when query changes (keeps navigation predictable)
+  useEffect(() => {
+    if (activeQuery === null) return;
+    setSelectedIndex(0);
+  }, [activeQuery]);
+
+  // Bound selected index to the available items
   const maxIndex = Math.max(0, filteredItems.length - 1);
   const boundedSelectedIndex = Math.min(selectedIndex, maxIndex);
 
@@ -157,7 +154,8 @@ export function useFileMentions({
       if (!item || !trigger.active) return;
 
       const endIndex = cursorPosition;
-      const filePath = item.path;
+      const normalizedPath = item.path.replace(/\\/g, '/');
+      const filePath = item.type === 'dir' ? `${normalizedPath}/` : normalizedPath;
 
       onSelect(filePath, trigger.startIndex, endIndex);
       setSelectedIndex(0);
