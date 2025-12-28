@@ -36,6 +36,7 @@ import { getContainerRunState } from './lib/containerRuns';
 import { loadPanelSizes, savePanelSizes } from './lib/persisted-layout';
 import { BrowserProvider } from './providers/BrowserProvider';
 import { terminalSessionRegistry } from './terminal/SessionRegistry';
+import { disposeAcpSessionsForTask } from './lib/acpSessions';
 import { type Provider } from './types';
 import type { Project, Task } from './types/app';
 import type { TaskMetadata } from './types/chat';
@@ -1481,6 +1482,9 @@ const AppContent: React.FC = () => {
               localStorage.removeItem(k);
             }
           } catch {}
+        } catch {}
+        try {
+          await disposeAcpSessionsForTask(task.id);
         } catch {}
         try {
           window.electronAPI.ptyKill?.(`task-${task.id}`);
