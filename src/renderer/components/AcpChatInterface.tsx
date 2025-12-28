@@ -31,12 +31,11 @@ import { getInstallCommandForProvider } from '@shared/providers/registry';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from './ui/select';
+import { Spinner } from './ui/spinner';
 
 // OpenAI logo SVG component
 const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
@@ -50,18 +49,6 @@ const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
   </svg>
 );
 
-// Anthropic logo SVG component
-const AnthropicIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    className={className}
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.767L16.906 20.48h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm2.327 10.239l-2.075-5.347-2.075 5.347h4.15z" />
-  </svg>
-);
-import { Spinner } from './ui/spinner';
 import { AnimatePresence, motion } from 'motion/react';
 import { Badge } from './ui/badge';
 import { cn } from '@/lib/utils';
@@ -519,30 +506,19 @@ type ConfigChoice = {
   description?: string;
 };
 
-// Agent types for model grouping - extensible for future agents
-type AgentType = 'codex' | 'claude';
-
 type ModelOption = {
   id: string;
   label: string;
   description?: string;
-  agent: AgentType;
 };
 
-// Claude models placeholder - uncomment when Claude Code is integrated
-// TODO: Wire these to Claude Code agent service when integrated
-const CLAUDE_MODELS: ModelOption[] = [
-  // { id: 'claude-opus-4.5', label: 'Opus 4.5', agent: 'claude' },
-  // { id: 'claude-sonnet-4.5', label: 'Sonnet 4.5', agent: 'claude' },
-  // { id: 'claude-haiku-4.5', label: 'Haiku 4.5', agent: 'claude' },
+// Static Codex models for instant loading (no waiting for IPC)
+const CODEX_MODELS: ModelOption[] = [
+  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+  { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
+  { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
+  { id: 'gpt-5.2', label: 'GPT-5.2' },
 ];
-
-// Helper to determine agent from model ID
-const getAgentFromModelId = (modelId: string | null | undefined): AgentType => {
-  if (!modelId) return 'codex';
-  if (modelId.startsWith('claude-')) return 'claude';
-  return 'codex';
-};
 
 type ModelVariant = ModelOption & {
   baseId: string;
@@ -820,7 +796,7 @@ const findModelConfigOption = (options: AcpConfigOption[]): AcpConfigOption | nu
 const normalizeModelOption = (model: any): ModelOption | null => {
   if (!model) return null;
   if (typeof model === 'string') {
-    return { id: model, label: model, agent: 'codex' };
+    return { id: model, label: model };
   }
   if (typeof model === 'object') {
     const id =
@@ -839,7 +815,6 @@ const normalizeModelOption = (model: any): ModelOption | null => {
       id: String(id),
       label: String(label),
       description: model.description ? String(model.description) : undefined,
-      agent: 'codex',
     };
   }
   return null;
@@ -2447,7 +2422,6 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
             id: String(choice.value),
             label: choice.label ?? choice.name ?? String(choice.value),
             description: choice.description,
-            agent: 'codex' as AgentType,
           };
         })
         .filter(Boolean) as ModelOption[];
@@ -2486,20 +2460,15 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     return map;
   }, [rawModelVariants]);
 
-  // Codex models from backend + static Claude models for UI
-  const codexModels = useMemo<ModelOption[]>(() => {
-    return Array.from(modelCatalog.values()).map((entry) => ({
+  const modelOptions = useMemo<ModelOption[]>(() => {
+    const dynamicModels = Array.from(modelCatalog.values()).map((entry) => ({
       id: entry.baseId,
       label: entry.label,
       description: entry.description,
-      agent: 'codex' as AgentType,
     }));
+    // Use dynamic models if available, otherwise fall back to static
+    return dynamicModels.length > 0 ? dynamicModels : CODEX_MODELS;
   }, [modelCatalog]);
-
-  // Combined model options: Codex models + Claude models
-  const modelOptions = useMemo<ModelOption[]>(() => {
-    return [...codexModels, ...CLAUDE_MODELS];
-  }, [codexModels]);
 
   const rawSelectedModelId = configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
   const selectedModelParts = splitModelId(rawSelectedModelId, null);
@@ -2516,7 +2485,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     : undefined;
   const persistedModelValue =
     resolvedModelValue || selectedBaseId || modelId || currentModelId || '';
-  const canSetModel = Boolean(sessionId) && (Boolean(modelConfigId) || modelOptions.length > 0);
+  const canSetModel = Boolean(sessionId);
   const thinkingConfigOption = useMemo(
     () => findThinkingConfigOption(configOptions),
     [configOptions]
@@ -3809,53 +3778,24 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               ) : null}
               <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3">
                 <div className="flex items-center gap-2">
-                  {/* Combined Agent + Model Selector */}
                   <Select value={resolvedModelValue} onValueChange={handleModelChange}>
                     <SelectTrigger
                       disabled={!canSetModel || modelOptions.length === 0}
                       className="h-8 w-auto gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm"
                     >
-                      {/* Show agent icon based on selected model */}
-                      {getAgentFromModelId(resolvedModelValue) === 'claude' ? (
-                        <AnthropicIcon className="h-3.5 w-3.5 shrink-0" />
-                      ) : (
-                        <OpenAIIcon className="h-3.5 w-3.5 shrink-0" />
-                      )}
+                      <OpenAIIcon className="h-3.5 w-3.5 shrink-0" />
                       <SelectValue
                         placeholder={modelOptions.length ? 'Model' : 'Model (not supported)'}
                       />
                     </SelectTrigger>
                     <SelectContent>
-                      {/* Codex models section */}
-                      {codexModels.length > 0 && (
-                        <SelectGroup>
-                          <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <OpenAIIcon className="h-3 w-3" />
-                            Codex
-                          </SelectLabel>
-                          {codexModels.map((option) => (
-                            <SelectItem key={option.id} value={option.id}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      )}
-                      {/* Claude Code models section - renders when models are available */}
-                      {CLAUDE_MODELS.length > 0 && (
-                        <SelectGroup>
-                          <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <AnthropicIcon className="h-3 w-3" />
-                            Claude Code
-                          </SelectLabel>
-                          {CLAUDE_MODELS.map((option) => (
-                            <SelectItem key={option.id} value={option.id}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      )}
-                      {/* Fallback if no models at all */}
-                      {modelOptions.length === 0 && (
+                      {modelOptions.length > 0 ? (
+                        modelOptions.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))
+                      ) : (
                         <SelectItem value="__empty" disabled>
                           No models available
                         </SelectItem>
