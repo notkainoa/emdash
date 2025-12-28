@@ -202,6 +202,7 @@ const MAX_PERSISTED_TOOL_INPUT_CHARS = 4000;
 const MAX_PERSISTED_TERMINAL_LINES = 120;
 const SESSION_ERROR_PREVIEW_LIMIT = 360;
 const SESSION_ERROR_PREVIEW_LINES = 4;
+/** Unique ID for tracking copy button state in the session error banner */
 const SESSION_ERROR_COPY_ID = 'acp-session-error';
 const SCROLL_BOTTOM_THRESHOLD = 80;
 
@@ -826,7 +827,10 @@ const AcpChatInterface: React.FC<Props> = ({
     // eslint-disable-next-line no-console
     console.log('[acp-ui]', ...args);
   }, []);
-  const planBannerStorageKey = useMemo(() => `acp:plan-banner-dismissed:conv-${task.id}-acp`, [task.id]);
+  const planBannerStorageKey = useMemo(
+    () => `acp:plan-banner-dismissed:conv-${task.id}-acp`,
+    [task.id]
+  );
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionStarting, setSessionStarting] = useState(false);
@@ -1499,10 +1503,6 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [feed, scrollToBottom]);
 
   useEffect(() => {
-    updatePinnedState();
-  }, [updatePinnedState, feed.length]);
-
-  useEffect(() => {
     return () => {
       if (copyResetRef.current !== null) {
         window.clearTimeout(copyResetRef.current);
@@ -1526,11 +1526,6 @@ const AcpChatInterface: React.FC<Props> = ({
   useEffect(() => {
     setAgentId(String(provider || 'codex'));
   }, [provider]);
-
-  useEffect(() => {
-    const stored = readLocalStorage(planBannerStorageKey);
-    setPlanBannerDismissed(stored === '1');
-  }, [planBannerStorageKey]);
 
   useEffect(() => {
     if (!planModeEnabled) {
@@ -1799,9 +1794,8 @@ const AcpChatInterface: React.FC<Props> = ({
         runStartedAtRef.current = null;
         setSessionId(null);
         setSessionStarting(false);
-        if (!sessionError) {
-          setSessionError('ACP session ended.');
-        }
+        // Use functional update to avoid stale closure - sessionError not in deps
+        setSessionError((prev) => prev ?? 'ACP session ended.');
         return;
       }
       if (payload.type === 'prompt_end') {
@@ -3432,148 +3426,151 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
             className="h-full overflow-y-auto px-6"
           >
             <div className="mx-auto flex max-w-4xl flex-col gap-3 pb-8">
-            {(() => {
-              const rendered: React.ReactNode[] = [];
-              let buffer: FeedItem[] = [];
+              {(() => {
+                const rendered: React.ReactNode[] = [];
+                let buffer: FeedItem[] = [];
 
-              const flushInline = () => {
-                if (!buffer.length) return;
-                buffer.forEach((item) => {
-                  if (item.type === 'tool') {
-                    rendered.push(
-                      renderToolCall(item.toolCallId, {
-                        showLoading: showInlineToolLoading && item.toolCallId === latestToolCallId,
-                      })
-                    );
-                  }
-                  if (item.type === 'message' && item.messageKind === 'thought') {
-                    rendered.push(renderThoughtMessage(item));
-                  }
-                });
-                buffer = [];
-              };
+                const flushInline = () => {
+                  if (!buffer.length) return;
+                  buffer.forEach((item) => {
+                    if (item.type === 'tool') {
+                      rendered.push(
+                        renderToolCall(item.toolCallId, {
+                          showLoading:
+                            showInlineToolLoading && item.toolCallId === latestToolCallId,
+                        })
+                      );
+                    }
+                    if (item.type === 'message' && item.messageKind === 'thought') {
+                      rendered.push(renderThoughtMessage(item));
+                    }
+                  });
+                  buffer = [];
+                };
 
-              const canCollapseBuffer = (assistantItem: Extract<FeedItem, { type: 'message' }>) => {
-                if (!buffer.length) return false;
-                if (assistantItem.streaming) return false;
-                for (const item of buffer) {
-                  if (item.type === 'tool') {
-                    const status = toolCalls[item.toolCallId]?.status;
-                    if (!status || !['completed', 'failed', 'cancelled'].includes(status)) {
-                      return false;
+                const canCollapseBuffer = (
+                  assistantItem: Extract<FeedItem, { type: 'message' }>
+                ) => {
+                  if (!buffer.length) return false;
+                  if (assistantItem.streaming) return false;
+                  for (const item of buffer) {
+                    if (item.type === 'tool') {
+                      const status = toolCalls[item.toolCallId]?.status;
+                      if (!status || !['completed', 'failed', 'cancelled'].includes(status)) {
+                        return false;
+                      }
+                    }
+                    if (item.type === 'message' && item.messageKind === 'thought') {
+                      if (item.streaming) return false;
                     }
                   }
-                  if (item.type === 'message' && item.messageKind === 'thought') {
-                    if (item.streaming) return false;
-                  }
-                }
-                return true;
-              };
+                  return true;
+                };
 
-              feed.forEach((item) => {
-                if (
-                  item.type === 'tool' ||
-                  (item.type === 'message' && item.messageKind === 'thought')
-                ) {
-                  buffer.push(item);
-                  return;
-                }
-
-                if (item.type === 'message' && item.role === 'assistant') {
-                  const shouldCollapse = canCollapseBuffer(item);
-                  if (!shouldCollapse) {
-                    flushInline();
-                  } else {
-                    const groupId = `tools-${item.id}`;
-                    const expanded = Boolean(expandedItems[groupId]);
-                    const hasLatest =
-                      showInlineToolLoading &&
-                      Boolean(
-                        latestToolCallId &&
-                          buffer.some(
-                            (buffered) =>
-                              buffered.type === 'tool' && buffered.toolCallId === latestToolCallId
-                          )
-                      );
-                    rendered.push(renderToolThoughtGroup(groupId, buffer, expanded, hasLatest));
-                    buffer = [];
+                feed.forEach((item) => {
+                  if (
+                    item.type === 'tool' ||
+                    (item.type === 'message' && item.messageKind === 'thought')
+                  ) {
+                    buffer.push(item);
+                    return;
                   }
-                  rendered.push(renderMessage(item));
-                  return;
-                }
+
+                  if (item.type === 'message' && item.role === 'assistant') {
+                    const shouldCollapse = canCollapseBuffer(item);
+                    if (!shouldCollapse) {
+                      flushInline();
+                    } else {
+                      const groupId = `tools-${item.id}`;
+                      const expanded = Boolean(expandedItems[groupId]);
+                      const hasLatest =
+                        showInlineToolLoading &&
+                        Boolean(
+                          latestToolCallId &&
+                            buffer.some(
+                              (buffered) =>
+                                buffered.type === 'tool' && buffered.toolCallId === latestToolCallId
+                            )
+                        );
+                      rendered.push(renderToolThoughtGroup(groupId, buffer, expanded, hasLatest));
+                      buffer = [];
+                    }
+                    rendered.push(renderMessage(item));
+                    return;
+                  }
+
+                  flushInline();
+
+                  if (item.type === 'message') {
+                    rendered.push(renderMessage(item));
+                    return;
+                  }
+                  if (item.type === 'permission') {
+                    const request = permissions[item.requestId];
+                    rendered.push(request ? renderPermission(request) : null);
+                    return;
+                  }
+                });
 
                 flushInline();
-
-                if (item.type === 'message') {
-                  rendered.push(renderMessage(item));
-                  return;
-                }
-                if (item.type === 'permission') {
-                  const request = permissions[item.requestId];
-                  rendered.push(request ? renderPermission(request) : null);
-                  return;
-                }
-              });
-
-              flushInline();
-              return rendered;
-            })()}
-            {showBottomLoading ? <LoadingTimer label={runTimerLabel} /> : null}
-            <div ref={bottomRef} />
+                return rendered;
+              })()}
+              {showBottomLoading ? <LoadingTimer label={runTimerLabel} /> : null}
+              <div ref={bottomRef} />
+            </div>
           </div>
-        </div>
-        {showJumpToLatest ? (
-          <div className="pointer-events-none absolute bottom-6 left-8 z-20">
-            <button
-              type="button"
-              onClick={handleJumpToLatest}
-              className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-md hover:bg-background"
-            >
-              Jump to latest
-              {unseenCount > 0 ? (
-                <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
-                  {unseenCount}
-                </span>
-              ) : null}
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="bg-transparent px-4 pb-4">
-        <div className="mx-auto max-w-4xl space-y-3">
-          {commandSuggestions.length ? (
-            <div className="rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
-              {commandSuggestions.map((cmd) => (
-                <button
-                  key={cmd.name}
-                  type="button"
-                  className="flex w-full items-start gap-2 rounded px-2 py-1 text-left hover:bg-muted/40"
-                  onClick={() => setInput(`/${cmd.name} `)}
-                >
-                  <span className="font-medium text-foreground">/{cmd.name}</span>
-                  {cmd.description ? (
-                    <span className="text-muted-foreground">{cmd.description}</span>
-                  ) : null}
-                  {cmd.hint ? (
-                    <span className="text-muted-foreground/70">- {cmd.hint}</span>
-                  ) : null}
-                </button>
-              ))}
+          {showJumpToLatest ? (
+            <div className="pointer-events-none absolute bottom-6 left-8 z-20">
+              <button
+                type="button"
+                onClick={handleJumpToLatest}
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-md hover:bg-background"
+              >
+                Jump to latest
+                {unseenCount > 0 ? (
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                    {unseenCount}
+                  </span>
+                ) : null}
+              </button>
             </div>
           ) : null}
-          {fileMentions.active && (
-            <FileMentionDropdown
-              items={fileMentions.items}
-              query={fileMentions.query}
-              selectedIndex={fileMentions.selectedIndex}
-              onSelect={handleMentionDropdownSelect}
-              getDisplayName={fileMentions.getDisplayName}
-              anchorRect={caretPosition}
-              error={fileMentions.error}
-              loading={fileMentions.loading}
-            />
-          )}
+        </div>
+
+        <div className="bg-transparent px-4 pb-4">
+          <div className="mx-auto max-w-4xl space-y-3">
+            {commandSuggestions.length ? (
+              <div className="rounded-lg border border-border bg-background p-2 text-xs shadow-lg">
+                {commandSuggestions.map((cmd) => (
+                  <button
+                    key={cmd.name}
+                    type="button"
+                    className="flex w-full items-start gap-2 rounded px-2 py-1 text-left hover:bg-muted/40"
+                    onClick={() => setInput(`/${cmd.name} `)}
+                  >
+                    <span className="font-medium text-foreground">/{cmd.name}</span>
+                    {cmd.description ? (
+                      <span className="text-muted-foreground">{cmd.description}</span>
+                    ) : null}
+                    {cmd.hint ? (
+                      <span className="text-muted-foreground/70">- {cmd.hint}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {fileMentions.active && (
+              <FileMentionDropdown
+                items={fileMentions.items}
+                query={fileMentions.query}
+                selectedIndex={fileMentions.selectedIndex}
+                onSelect={handleMentionDropdownSelect}
+                getDisplayName={fileMentions.getDisplayName}
+                anchorRect={caretPosition}
+                error={fileMentions.error}
+                loading={fileMentions.loading}
+              />
+            )}
             <div
               className={cn(
                 'relative rounded-xl border shadow-sm backdrop-blur-sm transition-all duration-300',
@@ -3636,9 +3633,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                           <Copy className="h-3 w-3" />
                         )}
                         <span>
-                          {copiedMessageId === SESSION_ERROR_COPY_ID
-                            ? 'Copied'
-                            : 'Copy full error'}
+                          {copiedMessageId === SESSION_ERROR_COPY_ID ? 'Copied' : 'Copy full error'}
                         </span>
                       </button>
                     </div>
