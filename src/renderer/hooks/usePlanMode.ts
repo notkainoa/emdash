@@ -3,8 +3,11 @@ import { PLANNING_MD } from '@/lib/planRules';
 import { log } from '@/lib/logger';
 import { logPlanEvent } from '@/lib/planLogs';
 
-export function usePlanMode(taskId: string, taskPath: string) {
-  const key = useMemo(() => `planMode:${taskId}`, [taskId]);
+export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
+  const key = useMemo(
+    () => `planMode:${taskId}${scope ? `:${scope}` : ''}`,
+    [taskId, scope]
+  );
   const [enabled, setEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(key) === '1';
@@ -12,9 +15,23 @@ export function usePlanMode(taskId: string, taskPath: string) {
       return false;
     }
   });
+  const skipPersistRef = useRef(false);
+
+  useEffect(() => {
+    skipPersistRef.current = true;
+    try {
+      setEnabled(localStorage.getItem(key) === '1');
+    } catch {
+      setEnabled(false);
+    }
+  }, [key]);
 
   // Persist flag
   useEffect(() => {
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
     try {
       if (enabled) localStorage.setItem(key, '1');
       else localStorage.removeItem(key);
