@@ -155,6 +155,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }) => ipcRenderer.invoke('git:commit-and-push', args),
   generatePrContent: (args: { taskPath: string; base?: string }) =>
     ipcRenderer.invoke('git:generate-pr-content', args),
+  checkPrAccess: (args: { taskPath: string; base?: string; head?: string }) =>
+    ipcRenderer.invoke('git:check-pr-access', args),
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -523,6 +525,16 @@ export interface ElectronAPI {
     createBranchIfOnDefault?: boolean;
     branchPrefix?: string;
   }) => Promise<{ success: boolean; branch?: string; output?: string; error?: string }>;
+  checkPrAccess: (args: { taskPath: string; base?: string; head?: string }) => Promise<{
+    success: boolean;
+    canWrite?: boolean;
+    viewerPermission?: string;
+    compareUrl?: string | null;
+    defaultBranch?: string;
+    currentBranch?: string;
+    code?: string;
+    error?: string;
+  }>;
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -532,7 +544,7 @@ export interface ElectronAPI {
     draft?: boolean;
     web?: boolean;
     fill?: boolean;
-  }) => Promise<{ success: boolean; url?: string; output?: string; error?: string }>;
+  }) => Promise<{ success: boolean; url?: string; output?: string; error?: string; code?: string }>;
   connectToGitHub: (
     projectPath: string
   ) => Promise<{ success: boolean; repository?: string; branch?: string; error?: string }>;

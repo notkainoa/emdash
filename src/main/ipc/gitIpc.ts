@@ -17,6 +17,58 @@ import { databaseService } from '../services/DatabaseService';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
+const AUTH_APP_RESTRICTION_RE =
+  /Auth App access restrictions|authorized OAuth apps|third-parties is limited/i;
+const ACCESS_DENIED_RE =
+  /resource not accessible|not authorized|permission to .* denied|write access|forbidden|repository not found|could not resolve to a repository|HTTP 403|HTTP 404/i;
+const GH_AUTH_REQUIRED_RE = /not logged in|authentication required|gh auth login/i;
+const GH_NOT_INSTALLED_RE = /command not found|spawn gh ENOENT|ENOENT.*gh/i;
+
+const getExecErrorOutput = (error: any): string => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const stdout = typeof error?.stdout === 'string' ? error.stdout : '';
+  const stderr = typeof error?.stderr === 'string' ? error.stderr : '';
+  return [message, stdout, stderr].filter(Boolean).join('\n').trim();
+};
+
+const parseRepoUrl = (rawUrl: string): { host: string; owner: string; repo: string } | null => {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(/\.git$/i, '');
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned)) {
+    try {
+      const url = new URL(cleaned);
+      const parts = url.pathname.replace(/^\/+/, '').split('/');
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        return { host: url.host, owner: parts[0], repo: parts[1] };
+      }
+    } catch {}
+  }
+
+  const scpMatch = cleaned.match(/^(?:[^@]+@)?([^:]+):(.+)$/);
+  if (scpMatch) {
+    const host = scpMatch[1];
+    const path = scpMatch[2].replace(/^\/+/, '');
+    const parts = path.split('/');
+    if (host && parts.length >= 2 && parts[0] && parts[1]) {
+      return { host, owner: parts[0], repo: parts[1] };
+    }
+  }
+
+  return null;
+};
+
+const buildCompareUrl = (
+  repo: { host: string; owner: string; repo: string },
+  base: string,
+  head: string
+): string => {
+  const baseRef = encodeURIComponent(base);
+  const headRef = encodeURIComponent(head);
+  return `https://${repo.host}/${repo.owner}/${repo.repo}/compare/${baseRef}...${headRef}?expand=1`;
+};
+
 export function registerGitIpc() {
   function resolveGitBin(): string {
     // Allow override via env
@@ -115,6 +167,122 @@ export function registerGitIpc() {
           error: error instanceof Error ? error.message : String(error),
         };
       }
+    }
+  );
+
+  ipcMain.handle(
+    'git:check-pr-access',
+    async (
+      _,
+      args: {
+        taskPath: string;
+        base?: string;
+        head?: string;
+      }
+    ) => {
+      const { taskPath, base, head } =
+        args ||
+        ({} as {
+          taskPath: string;
+          base?: string;
+          head?: string;
+        });
+
+      if (!taskPath) {
+        return { success: false, error: 'taskPath is required' };
+      }
+
+      let currentBranch = '';
+      try {
+        const { stdout } = await execAsync('git branch --show-current', { cwd: taskPath });
+        currentBranch = (stdout || '').trim();
+      } catch {}
+
+      let defaultBranch = 'main';
+      let defaultBranchFromGh = false;
+      let viewerPermission = '';
+      let repoUrl = '';
+      let errorText = '';
+      let code: string | undefined;
+
+      try {
+        const { stdout } = await execAsync(
+          'gh repo view --json nameWithOwner,url,viewerPermission,defaultBranchRef',
+          { cwd: taskPath }
+        );
+        const info = JSON.parse(stdout || '{}');
+        if (info?.viewerPermission) viewerPermission = String(info.viewerPermission);
+        if (info?.url) repoUrl = String(info.url);
+        if (info?.defaultBranchRef?.name) {
+          defaultBranch = String(info.defaultBranchRef.name);
+          defaultBranchFromGh = true;
+        }
+        if (!repoUrl && info?.nameWithOwner) {
+          repoUrl = `https://github.com/${String(info.nameWithOwner)}`;
+        }
+      } catch (error) {
+        errorText = getExecErrorOutput(error);
+        if (AUTH_APP_RESTRICTION_RE.test(errorText)) {
+          code = 'ORG_AUTH_APP_RESTRICTED';
+        } else if (GH_AUTH_REQUIRED_RE.test(errorText)) {
+          code = 'GH_NOT_AUTHENTICATED';
+        } else if (GH_NOT_INSTALLED_RE.test(errorText)) {
+          code = 'GH_NOT_INSTALLED';
+        } else if (ACCESS_DENIED_RE.test(errorText)) {
+          code = 'REPO_ACCESS_DENIED';
+        }
+      }
+
+      if (!defaultBranchFromGh) {
+        try {
+          const { stdout } = await execAsync(
+            'git symbolic-ref --short refs/remotes/origin/HEAD',
+            { cwd: taskPath }
+          );
+          const line = (stdout || '').trim();
+          const last = line.split('/').pop();
+          if (last) defaultBranch = last;
+        } catch {}
+      }
+
+      let repoInfo = repoUrl ? parseRepoUrl(repoUrl) : null;
+      if (!repoInfo) {
+        try {
+          const { stdout } = await execAsync('git remote get-url origin', { cwd: taskPath });
+          repoInfo = parseRepoUrl((stdout || '').trim());
+        } catch {}
+      }
+
+      const baseRef = (base || '').trim() || defaultBranch;
+      const headRef = (head || '').trim() || currentBranch;
+
+      const compareUrl =
+        repoInfo && baseRef && headRef ? buildCompareUrl(repoInfo, baseRef, headRef) : null;
+
+      let canWrite: boolean | undefined;
+      if (viewerPermission) {
+        const perm = viewerPermission.toUpperCase();
+        canWrite = perm === 'ADMIN' || perm === 'MAINTAIN' || perm === 'WRITE';
+        if (!canWrite && !code) code = 'REPO_ACCESS_DENIED';
+      } else if (code === 'REPO_ACCESS_DENIED' || code === 'ORG_AUTH_APP_RESTRICTED') {
+        canWrite = false;
+      }
+
+      const success =
+        typeof canWrite === 'boolean' ||
+        code === 'REPO_ACCESS_DENIED' ||
+        code === 'ORG_AUTH_APP_RESTRICTED';
+
+      return {
+        success,
+        canWrite,
+        viewerPermission: viewerPermission || undefined,
+        compareUrl,
+        defaultBranch,
+        currentBranch,
+        error: errorText || undefined,
+        code,
+      };
     }
   );
 
@@ -352,9 +520,12 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         const errStdout = typeof error?.stdout === 'string' ? error.stdout : '';
         const errStderr = typeof error?.stderr === 'string' ? error.stderr : '';
         const combined = [errMsg, errStdout, errStderr].filter(Boolean).join('\n').trim();
-        const restrictionRe =
-          /Auth App access restrictions|authorized OAuth apps|third-parties is limited/i;
-        const code = restrictionRe.test(combined) ? 'ORG_AUTH_APP_RESTRICTED' : undefined;
+        let code: string | undefined;
+        if (AUTH_APP_RESTRICTION_RE.test(combined)) {
+          code = 'ORG_AUTH_APP_RESTRICTED';
+        } else if (ACCESS_DENIED_RE.test(combined)) {
+          code = 'REPO_ACCESS_DENIED';
+        }
         if (code === 'ORG_AUTH_APP_RESTRICTED') {
           log.warn('GitHub org restrictions detected during PR creation');
         } else {
@@ -585,7 +756,8 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         return { success: true, branch: activeBranch, output: (out || '').trim() };
       } catch (error) {
         log.error('Failed to commit and push:', error);
-        return { success: false, error: error as string };
+        const message = getExecErrorOutput(error) || String(error);
+        return { success: false, error: message };
       }
     }
   );

@@ -390,6 +390,16 @@ declare global {
         description?: string;
         error?: string;
       }>;
+      checkPrAccess: (args: { taskPath: string; base?: string; head?: string }) => Promise<{
+        success: boolean;
+        canWrite?: boolean;
+        viewerPermission?: string;
+        compareUrl?: string | null;
+        defaultBranch?: string;
+        currentBranch?: string;
+        code?: string;
+        error?: string;
+      }>;
       createPullRequest: (args: {
         taskPath: string;
         title?: string;
@@ -404,6 +414,7 @@ declare global {
         url?: string;
         output?: string;
         error?: string;
+        code?: string;
       }>;
       getPrStatus: (args: { taskPath: string }) => Promise<{
         success: boolean;
@@ -923,6 +934,16 @@ export interface ElectronAPI {
     branches?: Array<{ ref: string; remote: string; branch: string; label: string }>;
     error?: string;
   }>;
+  checkPrAccess: (args: { taskPath: string; base?: string; head?: string }) => Promise<{
+    success: boolean;
+    canWrite?: boolean;
+    viewerPermission?: string;
+    compareUrl?: string | null;
+    defaultBranch?: string;
+    currentBranch?: string;
+    code?: string;
+    error?: string;
+  }>;
   createPullRequest: (args: {
     taskPath: string;
     title?: string;
@@ -937,6 +958,7 @@ export interface ElectronAPI {
     url?: string;
     output?: string;
     error?: string;
+    code?: string;
   }>;
   connectToGitHub: (projectPath: string) => Promise<{
     success: boolean;

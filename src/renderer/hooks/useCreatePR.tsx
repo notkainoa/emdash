@@ -20,6 +20,20 @@ type CreatePROptions = {
   onSuccess?: () => Promise<void> | void;
 };
 
+const formatErrorMessage = (value: unknown, fallback: string) => {
+  if (!value) return fallback;
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.message || fallback;
+  if (typeof (value as { message?: unknown }).message === 'string') {
+    return (value as { message: string }).message;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
 export function useCreatePR() {
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
@@ -44,19 +58,75 @@ export function useCreatePR() {
         return { success: false, error: 'Electron bridge unavailable' } as any;
       }
 
+      let accessInfo: any = null;
+      let compareUrl: string | null = null;
+
+      if (!prOptions?.web && typeof api.checkPrAccess === 'function') {
+        try {
+          accessInfo = await api.checkPrAccess({
+            taskPath,
+            base: prOptions?.base,
+            head: prOptions?.head,
+          });
+          compareUrl = accessInfo?.compareUrl ?? null;
+          const accessDenied =
+            accessInfo?.success &&
+            (accessInfo?.canWrite === false ||
+              accessInfo?.code === 'REPO_ACCESS_DENIED' ||
+              accessInfo?.code === 'ORG_AUTH_APP_RESTRICTED');
+
+          if (accessDenied) {
+            const description =
+              accessInfo?.code === 'ORG_AUTH_APP_RESTRICTED'
+                ? 'Your organization restricts GitHub CLI access. Create the PR in your browser instead.'
+                : "You don't have write access to this repo. Create the PR in your browser instead.";
+            toast({
+              title: (
+                <span className="inline-flex items-center gap-2">
+                  <img src={githubLogo} alt="GitHub" className="h-5 w-5 rounded-sm object-contain" />
+                  Failed to Create PR
+                </span>
+              ),
+              description,
+              variant: 'destructive',
+              action: compareUrl ? (
+                <ToastAction
+                  altText="Open compare"
+                  onClick={() => {
+                    if (compareUrl && window.electronAPI?.openExternal) {
+                      window.electronAPI.openExternal(compareUrl);
+                    }
+                  }}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Open compare
+                    <ArrowUpRight className="h-3 w-3" />
+                  </span>
+                </ToastAction>
+              ) : undefined,
+            });
+            return { success: false, error: accessInfo?.code || 'access_denied' } as any;
+          }
+        } catch {
+          // Non-fatal: fall through to existing PR flow
+        }
+      }
+
       // Auto-generate PR title and description if not provided
       let finalPrOptions = { ...(prOptions || {}) };
 
       if (!finalPrOptions.title || !finalPrOptions.body) {
         try {
           // Get default branch for comparison
-          let defaultBranch = 'main';
-          try {
-            const branchStatus = await api.getBranchStatus?.({ taskPath });
-            if (branchStatus?.success && branchStatus.defaultBranch) {
-              defaultBranch = branchStatus.defaultBranch;
-            }
-          } catch {}
+          let defaultBranch = accessInfo?.defaultBranch || 'main';
+          if (!accessInfo?.defaultBranch) {
+            try {
+              const branchStatus = await api.getBranchStatus?.({ taskPath });
+              if (branchStatus?.success && branchStatus.defaultBranch) {
+                defaultBranch = branchStatus.defaultBranch;
+              }
+            } catch {}
+          }
 
           // Generate PR content
           if (api.generatePrContent) {
@@ -89,12 +159,13 @@ export function useCreatePR() {
       });
 
       if (!commitRes?.success) {
+        const commitError = formatErrorMessage(commitRes?.error, 'Unable to push changes.');
         toast({
           title: 'Commit/Push Failed',
-          description: commitRes?.error || 'Unable to push changes.',
+          description: commitError,
           variant: 'destructive',
         });
-        return { success: false, error: commitRes?.error || 'Commit/push failed' } as any;
+        return { success: false, error: commitError } as any;
       }
 
       const res = await api.createPullRequest({
@@ -142,11 +213,59 @@ export function useCreatePR() {
           const { captureTelemetry } = await import('../lib/telemetryClient');
           captureTelemetry('pr_creation_failed', { error_type: res?.error || 'unknown' });
         })();
-        const details =
-          res?.output && typeof res.output === 'string' ? `\n\nDetails:\n${res.output}` : '';
-        // Offer a browser fallback if org restricts the GitHub CLI app
+        const isAccessDenied =
+          typeof res?.code === 'string' && res.code === 'REPO_ACCESS_DENIED';
         const isOrgRestricted =
           typeof res?.code === 'string' && res.code === 'ORG_AUTH_APP_RESTRICTED';
+        const accessBlocked = isAccessDenied || isOrgRestricted;
+        const details =
+          !accessBlocked && res?.output && typeof res.output === 'string'
+            ? `\n\nDetails:\n${res.output}`
+            : '';
+        const errorText = formatErrorMessage(res?.error, 'Unknown error');
+        const accessDescription = isOrgRestricted
+          ? 'Your organization restricts GitHub CLI access. Create the PR in your browser instead.'
+          : "You don't have write access to this repo. Create the PR in your browser instead.";
+        const fallbackAction = isOrgRestricted ? (
+          <ToastAction
+            altText="Open in browser"
+            onClick={() => {
+              void (async () => {
+                const { captureTelemetry } = await import('../lib/telemetryClient');
+                captureTelemetry('pr_creation_retry_browser');
+              })();
+              // Retry using web flow
+              void createPR({
+                taskPath,
+                commitMessage,
+                createBranchIfOnDefault,
+                branchPrefix,
+                prOptions: { ...(prOptions || {}), web: true, fill: true },
+                onSuccess,
+              });
+            }}
+          >
+            <span className="inline-flex items-center gap-1">
+              Open in browser
+              <ArrowUpRight className="h-3 w-3" />
+            </span>
+          </ToastAction>
+        ) : undefined;
+        const accessAction = compareUrl ? (
+          <ToastAction
+            altText="Open compare"
+            onClick={() => {
+              if (compareUrl && window.electronAPI?.openExternal) {
+                window.electronAPI.openExternal(compareUrl);
+              }
+            }}
+          >
+            <span className="inline-flex items-center gap-1">
+              Open compare
+              <ArrowUpRight className="h-3 w-3" />
+            </span>
+          </ToastAction>
+        ) : undefined;
 
         toast({
           title: (
@@ -155,41 +274,9 @@ export function useCreatePR() {
               Failed to Create PR
             </span>
           ),
-          description:
-            (res?.error || 'Unknown error') +
-            (isOrgRestricted
-              ? '\n\nYour organization restricts OAuth apps. You can either:\n' +
-                '• Approve the GitHub CLI app in your org settings, or\n' +
-                '• Authenticate gh with a Personal Access Token that has repo scope, or\n' +
-                '• Create the PR in your browser.'
-              : '') +
-            details,
+          description: accessBlocked ? accessDescription : errorText + details,
           variant: 'destructive',
-          action: isOrgRestricted ? (
-            <ToastAction
-              altText="Open in browser"
-              onClick={() => {
-                void (async () => {
-                  const { captureTelemetry } = await import('../lib/telemetryClient');
-                  captureTelemetry('pr_creation_retry_browser');
-                })();
-                // Retry using web flow
-                void createPR({
-                  taskPath,
-                  commitMessage,
-                  createBranchIfOnDefault,
-                  branchPrefix,
-                  prOptions: { ...(prOptions || {}), web: true, fill: true },
-                  onSuccess,
-                });
-              }}
-            >
-              <span className="inline-flex items-center gap-1">
-                Open in browser
-                <ArrowUpRight className="h-3 w-3" />
-              </span>
-            </ToastAction>
-          ) : undefined,
+          action: accessBlocked ? accessAction || fallbackAction : undefined,
         });
       }
 
