@@ -217,7 +217,7 @@ const CodeReviewConfigModal: React.FC<CodeReviewConfigModalProps> = ({
                   <span>{currentOption?.label}</span>
                 </div>
               </SelectTrigger>
-              <SelectContent className="z-[120] min-w-[320px]">
+              <SelectContent className="z-[1000] min-w-[320px]">
                 {AGENT_MODEL_OPTIONS.map((group, groupIndex) => {
                   const GroupLogo = group.Logo;
                   return (
