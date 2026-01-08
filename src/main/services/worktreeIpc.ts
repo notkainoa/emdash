@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { worktreeService } from './WorktreeService';
+import type { ProviderId } from '@shared/providers/registry';
 
 export function registerWorktreeIpc(): void {
   // Create a new worktree
@@ -12,6 +13,7 @@ export function registerWorktreeIpc(): void {
         taskName: string;
         projectId: string;
         autoApprove?: boolean;
+        providerId?: ProviderId;
       }
     ) => {
       try {
@@ -19,7 +21,8 @@ export function registerWorktreeIpc(): void {
           args.projectPath,
           args.taskName,
           args.projectId,
-          args.autoApprove
+          args.autoApprove,
+          args.providerId
         );
         return { success: true, worktree };
       } catch (error) {

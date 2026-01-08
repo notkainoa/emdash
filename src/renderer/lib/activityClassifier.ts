@@ -25,7 +25,7 @@ export function classifyActivity(
     if (/Auto\s*[\r\n]+\s*\/\s*commands/i.test(text)) return 'idle';
   }
 
-  if (p === 'claude') {
+  if (p === 'claude' || p === 'claude-glm') {
     // Busy cues seen in Claude Code CLI
     if (/esc\s*to\s*interrupt/i.test(text)) return 'busy';
     if (

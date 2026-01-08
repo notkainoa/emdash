@@ -91,12 +91,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings: any) => ipcRenderer.invoke('settings:update', settings),
 
+  // Claude Code (GLM) key management
+  claudeGlmSaveKey: (apiKey: string) => ipcRenderer.invoke('claude-glm:saveKey', apiKey),
+  claudeGlmClearKey: () => ipcRenderer.invoke('claude-glm:clearKey'),
+  claudeGlmCheck: () => ipcRenderer.invoke('claude-glm:check'),
+
   // Worktree management
   worktreeCreate: (args: {
     projectPath: string;
     taskName: string;
     projectId: string;
     autoApprove?: boolean;
+    providerId?: string;
   }) => ipcRenderer.invoke('worktree:create', args),
   worktreeList: (args: { projectPath: string }) => ipcRenderer.invoke('worktree:list', args),
   worktreeRemove: (args: {

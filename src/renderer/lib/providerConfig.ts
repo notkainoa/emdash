@@ -30,6 +30,7 @@ export type ProviderInfo = {
 // Providers with initial prompt support first, then those without
 export const providerConfig: Record<Provider, ProviderInfo> = {
   claude: { name: 'Claude Code', logo: claudeLogo, alt: 'Claude Code' },
+  'claude-glm': { name: 'Claude Code (GLM)', logo: claudeLogo, alt: 'Claude Code (GLM)' },
   codex: { name: 'Codex', logo: openaiLogo, alt: 'Codex', invertInDark: true },
   cursor: { name: 'Cursor', logo: cursorLogo, alt: 'Cursor CLI', invertInDark: true },
   gemini: { name: 'Gemini', logo: geminiLogo, alt: 'Gemini CLI' },

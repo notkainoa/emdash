@@ -23,7 +23,7 @@ import {
 } from '@/lib/containerRuns';
 import { useBrowser } from '@/providers/BrowserProvider';
 import { useTaskTerminals } from '@/lib/taskTerminalsStore';
-import { getInstallCommandForProvider } from '@shared/providers/registry';
+import { PROVIDER_IDS, getInstallCommandForProvider, type ProviderId } from '@shared/providers/registry';
 import { useAutoScrollOnTaskSwitch } from '@/hooks/useAutoScrollOnTaskSwitch';
 import { terminalSessionRegistry } from '../terminal/SessionRegistry';
 import { TaskScopeProvider } from './TaskScopeContext';
@@ -201,23 +201,7 @@ const ChatInterface: React.FC<Props> = ({
       if (initialProvider) {
         setProvider(initialProvider);
       } else {
-        const validProviders: Provider[] = [
-          'qwen',
-          'codex',
-          'claude',
-          'droid',
-          'gemini',
-          'cursor',
-          'copilot',
-          'amp',
-          'opencode',
-          'charm',
-          'auggie',
-          'kimi',
-          'kiro',
-          'rovo',
-        ];
-        if (last && (validProviders as string[]).includes(last)) {
+        if (last && PROVIDER_IDS.includes(last as ProviderId)) {
           setProvider(last as Provider);
         } else {
           setProvider('codex');

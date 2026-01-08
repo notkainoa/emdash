@@ -25,6 +25,11 @@ export const providerInfo: Record<UiProvider, ProviderInfo> = {
     description:
       'CLI that uses Anthropic Claude for code edits, explanations, and structured refactors in the terminal.',
   },
+  'claude-glm': {
+    title: 'Claude Code (GLM)',
+    description:
+      'Claude Code configured for GLM models via Z.AI. Set your Z.AI API key in Settings to use this provider.',
+  },
   qwen: {
     title: 'Qwen Code',
     description:

@@ -14,6 +14,7 @@ import { registerConnectionsIpc } from './connectionsIpc';
 import { registerUpdateIpc } from '../services/updateIpc';
 import { registerTelemetryIpc } from './telemetryIpc';
 import { registerJiraIpc } from './jiraIpc';
+import { registerClaudeGlmIpc } from './claudeGlmIpc';
 import { registerPlanLockIpc } from '../services/planLockIpc';
 import { registerSettingsIpc } from './settingsIpc';
 import { registerContainerIpc } from './containerIpc';
@@ -47,6 +48,7 @@ export function registerAllIpc() {
   registerWorktreeIpc();
   registerFsIpc();
   registerLinearIpc();
+  registerClaudeGlmIpc();
   registerConnectionsIpc();
   registerJiraIpc();
   registerPlanLockIpc();

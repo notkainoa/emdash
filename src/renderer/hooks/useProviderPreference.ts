@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-
-export type ProviderId = 'codex' | 'claude';
+import type { ProviderId } from '@shared/providers/registry';
 
 export function useProviderPreference(
   taskId: string,

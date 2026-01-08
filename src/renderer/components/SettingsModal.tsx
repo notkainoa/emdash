@@ -17,6 +17,7 @@ import Context7SettingsCard from './Context7SettingsCard';
 import DefaultProviderSettingsCard from './DefaultProviderSettingsCard';
 import TaskSettingsCard from './TaskSettingsCard';
 import KeyboardSettingsCard from './KeyboardSettingsCard';
+import ClaudeGlmSettingsCard from './ClaudeGlmSettingsCard';
 import { CliProviderStatus } from '../types/connections';
 import { Separator } from './ui/separator';
 
@@ -238,6 +239,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         description: '',
         sections: [
           { title: 'Integrations', render: () => <IntegrationsCard /> },
+          { title: 'Claude Code (GLM)', render: () => <ClaudeGlmSettingsCard /> },
           {
             title: 'CLI providers',
             action: (

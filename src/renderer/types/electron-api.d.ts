@@ -209,7 +209,12 @@ declare global {
           };
         };
         error?: string;
-      }>;
+      }>; 
+
+      // Claude Code (GLM) key management
+      claudeGlmSaveKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
+      claudeGlmClearKey: () => Promise<{ success: boolean; error?: string }>;
+      claudeGlmCheck: () => Promise<{ connected: boolean }>;
 
       // PTY
       ptyStart: (opts: {
@@ -281,6 +286,7 @@ declare global {
         taskName: string;
         projectId: string;
         autoApprove?: boolean;
+        providerId?: string;
       }) => Promise<{ success: boolean; worktree?: any; error?: string }>;
       worktreeList: (args: {
         projectPath: string;
@@ -850,6 +856,7 @@ export interface ElectronAPI {
     taskName: string;
     projectId: string;
     autoApprove?: boolean;
+    providerId?: string;
   }) => Promise<{ success: boolean; worktree?: any; error?: string }>;
   worktreeList: (args: {
     projectPath: string;

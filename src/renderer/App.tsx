@@ -988,6 +988,38 @@ const AppContent: React.FC = () => {
   ) => {
     if (!selectedProject) return;
 
+    const needsGlmKey = providerRuns.some((pr) => pr.provider === 'claude-glm');
+    if (needsGlmKey) {
+      try {
+        const api: any = (window as any).electronAPI;
+        if (!api?.claudeGlmCheck) {
+          toast({
+            title: 'Claude Code (GLM) unavailable',
+            description: 'Update Emdash to configure a Z.AI API key for Claude Code (GLM).',
+            variant: 'destructive',
+          });
+          return;
+        }
+        const status = await api.claudeGlmCheck();
+        if (!status?.connected) {
+          toast({
+            title: 'Claude Code (GLM) API key required',
+            description: 'Add your Z.AI API key in Settings → Connections → Claude Code (GLM).',
+            variant: 'destructive',
+          });
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to verify Claude Code (GLM) key:', error);
+        toast({
+          title: 'Unable to verify GLM key',
+          description: 'Check your Z.AI API key in Settings and try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     setIsCreatingTask(true);
     try {
       let preparedPrompt: string | undefined = undefined;
@@ -1127,6 +1159,7 @@ const AppContent: React.FC = () => {
                 taskName: variantName,
                 projectId: selectedProject.id,
                 autoApprove,
+                providerId: provider,
               });
               if (!worktreeResult?.success || !worktreeResult.worktree) {
                 throw new Error(
@@ -1204,6 +1237,7 @@ const AppContent: React.FC = () => {
             taskName,
             projectId: selectedProject.id,
             autoApprove,
+            providerId: primaryProvider,
           });
 
           if (!worktreeResult.success) {

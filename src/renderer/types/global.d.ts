@@ -51,6 +51,7 @@ declare global {
         taskName: string;
         projectId: string;
         autoApprove?: boolean;
+        providerId?: string;
       }) => Promise<{ success: boolean; worktree?: any; error?: string }>;
       worktreeList: (args: {
         projectPath: string;
@@ -206,6 +207,9 @@ declare global {
       githubLogout: () => Promise<void>;
       getSettings: () => Promise<any>;
       updateSettings: (settings: any) => Promise<void>;
+      claudeGlmSaveKey?: (apiKey: string) => Promise<{ success: boolean; error?: string }>;
+      claudeGlmClearKey?: () => Promise<{ success: boolean; error?: string }>;
+      claudeGlmCheck?: () => Promise<{ connected: boolean }>;
       linearCheckConnection?: () => Promise<{
         connected: boolean;
         taskName?: string;

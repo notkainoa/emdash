@@ -122,6 +122,7 @@ class ActivityStore {
         'qwen',
         'codex',
         'claude',
+        'claude-glm',
         'droid',
         'gemini',
         'cursor',

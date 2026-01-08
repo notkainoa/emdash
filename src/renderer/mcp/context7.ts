@@ -235,6 +235,9 @@ export const CONTEXT7_INTEGRATION: Context7IntegrationMeta = {
     claude: {
       setup: [SNIPPETS.claudeRemote, SNIPPETS.claudeLocal],
     },
+    'claude-glm': {
+      setup: [SNIPPETS.claudeRemote, SNIPPETS.claudeLocal],
+    },
     cursor: {
       setup: [SNIPPETS.cursorRemote, SNIPPETS.cursorLocal],
     },

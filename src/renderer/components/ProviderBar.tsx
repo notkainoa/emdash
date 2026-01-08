@@ -147,6 +147,7 @@ export const ProviderBar: React.FC<Props> = ({
     qwen: { name: 'Qwen Code', logo: qwenLogo },
     codex: { name: 'Codex', logo: openaiLogo },
     claude: { name: 'Claude Code', logo: claudeLogo },
+    'claude-glm': { name: 'Claude Code (GLM)', logo: claudeLogo },
     droid: { name: 'Droid', logo: factoryLogo },
     gemini: { name: 'Gemini', logo: geminiLogo },
     cursor: { name: 'Cursor', logo: cursorLogo },

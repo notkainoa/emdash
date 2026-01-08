@@ -5,6 +5,10 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { projectSettingsService } from './ProjectSettingsService';
+import type { ProviderId } from '@shared/providers/registry';
+import { claudeGlmService } from './ClaudeGlmService';
+import { databaseService } from './DatabaseService';
+import type { Task as DbTask } from './DatabaseService';
 
 type BaseRefInfo = { remote: string; branch: string; fullRef: string };
 
@@ -51,7 +55,8 @@ export class WorktreeService {
     projectPath: string,
     taskName: string,
     projectId: string,
-    autoApprove?: boolean
+    autoApprove?: boolean,
+    providerId?: ProviderId
   ): Promise<WorktreeInfo> {
     try {
       const sluggedName = this.slugify(taskName);
@@ -107,6 +112,17 @@ export class WorktreeService {
       // Setup Claude Code settings if auto-approve is enabled
       if (autoApprove) {
         this.ensureClaudeAutoApprove(worktreePath);
+      }
+
+      if (providerId === 'claude-glm') {
+        const apiKey = await claudeGlmService.getApiKey();
+        if (apiKey) {
+          this.ensureClaudeGlmSettings(worktreePath, apiKey);
+        } else {
+          log.warn('Claude Code (GLM) API key missing; skipping .claude/settings.local.json', {
+            worktreePath,
+          });
+        }
       }
 
       await this.logWorktreeSyncStatus(projectPath, worktreePath, fetchedBaseRef);
@@ -785,6 +801,66 @@ export class WorktreeService {
     return Array.from(this.worktrees.values());
   }
 
+  async applyClaudeGlmKeyToWorktrees(apiKey: string): Promise<void> {
+    const clean = apiKey.trim();
+    if (!clean) return;
+
+    try {
+      const tasks = await databaseService.getTasks();
+      const paths = this.collectClaudeGlmWorktreePaths(tasks);
+      for (const worktreePath of paths) {
+        if (!fs.existsSync(worktreePath)) {
+          log.warn('Claude Code (GLM) worktree missing; skipping settings update', {
+            worktreePath,
+          });
+          continue;
+        }
+        this.ensureClaudeGlmSettings(worktreePath, clean);
+      }
+    } catch (error) {
+      log.error('Failed to apply Claude Code (GLM) settings to existing worktrees', error);
+    }
+  }
+
+  async clearClaudeGlmSettingsForWorktrees(): Promise<void> {
+    try {
+      const tasks = await databaseService.getTasks();
+      const paths = this.collectClaudeGlmWorktreePaths(tasks);
+      for (const worktreePath of paths) {
+        if (!fs.existsSync(worktreePath)) {
+          log.warn('Claude Code (GLM) worktree missing; skipping settings cleanup', {
+            worktreePath,
+          });
+          continue;
+        }
+        this.ensureClaudeGlmSettings(worktreePath, null);
+      }
+    } catch (error) {
+      log.error('Failed to clear Claude Code (GLM) settings from existing worktrees', error);
+    }
+  }
+
+  private collectClaudeGlmWorktreePaths(tasks: DbTask[]): string[] {
+    const paths = new Set<string>();
+    for (const task of tasks) {
+      if (task.useWorktree === false) continue;
+
+      if (task.agentId === 'claude-glm' && typeof task.path === 'string') {
+        paths.add(task.path);
+      }
+
+      const variants = task.metadata?.multiAgent?.variants;
+      if (Array.isArray(variants)) {
+        for (const variant of variants) {
+          if (variant?.provider === 'claude-glm' && typeof variant.path === 'string') {
+            paths.add(variant.path);
+          }
+        }
+      }
+    }
+    return Array.from(paths);
+  }
+
   private ensureCodexLogIgnored(worktreePath: string) {
     try {
       const gitMeta = path.join(worktreePath, '.git');
@@ -845,6 +921,84 @@ export class WorktreeService {
       log.info(`Created .claude/settings.json with auto-approve enabled in ${worktreePath}`);
     } catch (err) {
       log.error('Failed to create .claude/settings.json', err);
+    }
+  }
+
+  private ensureClaudeGlmSettings(worktreePath: string, apiKey?: string | null) {
+    try {
+      const claudeDir = path.join(worktreePath, '.claude');
+      const settingsPath = path.join(claudeDir, 'settings.local.json');
+      const cleanKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+      const hasKey = Boolean(cleanKey);
+
+      if (!hasKey && !fs.existsSync(settingsPath)) {
+        return;
+      }
+
+      if (hasKey && !fs.existsSync(claudeDir)) {
+        fs.mkdirSync(claudeDir, { recursive: true });
+      }
+
+      let settings: Record<string, any> = {};
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const content = fs.readFileSync(settingsPath, 'utf8');
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            settings = parsed as Record<string, any>;
+          } else {
+            log.warn('Existing .claude/settings.local.json was not an object, will overwrite');
+          }
+        } catch (err) {
+          log.warn('Failed to parse existing .claude/settings.local.json, will overwrite', err);
+        }
+      }
+
+      const env = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
+      const keys = [
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_BASE_URL',
+        'API_TIMEOUT_MS',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      ];
+
+      if (hasKey) {
+        env.ANTHROPIC_AUTH_TOKEN = cleanKey;
+        env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic';
+        env.API_TIMEOUT_MS = '3000000';
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
+      } else {
+        for (const key of keys) {
+          delete env[key];
+        }
+      }
+
+      if (Object.keys(env).length > 0) {
+        settings.env = env;
+      } else {
+        delete settings.env;
+      }
+
+      if (!hasKey && Object.keys(settings).length === 0) {
+        try {
+          fs.unlinkSync(settingsPath);
+          log.info(`Removed .claude/settings.local.json for GLM in ${worktreePath}`);
+        } catch (err) {
+          log.warn('Failed to remove .claude/settings.local.json for GLM', { worktreePath, error: err });
+        }
+        return;
+      }
+
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+      log.info(
+        `${hasKey ? 'Updated' : 'Cleared'} .claude/settings.local.json for GLM in ${worktreePath}`
+      );
+    } catch (err) {
+      log.error('Failed to update .claude/settings.local.json', err);
     }
   }
 

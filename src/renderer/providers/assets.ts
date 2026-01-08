@@ -26,6 +26,7 @@ export const providerAssets: Record<UiProvider, ProviderAsset> = {
   codex: { name: 'OpenAI', logo: openaiLogo, alt: 'Codex', invertInDark: true },
   qwen: { name: 'Qwen Code', logo: qwenLogo, alt: 'Qwen Code CLI' },
   claude: { name: 'Anthropic', logo: claudeLogo, alt: 'Claude Code' },
+  'claude-glm': { name: 'Anthropic', logo: claudeLogo, alt: 'Claude Code (GLM)' },
   droid: { name: 'Factory AI', logo: factoryLogo, alt: 'Factory Droid', invertInDark: true },
   gemini: { name: 'Google', logo: geminiLogo, alt: 'Gemini CLI' },
   cursor: { name: 'Cursor', logo: cursorLogo, alt: 'Cursor CLI', invertInDark: true },
