@@ -689,13 +689,20 @@ export class DatabaseService {
       // Recovery: if a previous run partially applied the workspace->task migration, finish it.
       // Symptom: `tasks` exists, `conversations` still has `workspace_id`, and `__new_conversations` exists.
       let recovered = false;
-      if (
-        (await this.tableExists('tasks')) &&
-        (await this.tableExists('conversations')) &&
-        (await this.tableExists('__new_conversations')) &&
-        (await this.tableHasColumn('conversations', 'workspace_id')) &&
-        !(await this.tableHasColumn('conversations', 'task_id'))
-      ) {
+      const [
+        hasTasks,
+        hasConversations,
+        hasNewConversations,
+        hasWorkspaceIdColumn,
+        hasTaskIdColumn,
+      ] = await Promise.all([
+        this.tableExists('tasks'),
+        this.tableExists('conversations'),
+        this.tableExists('__new_conversations'),
+        this.tableHasColumn('conversations', 'workspace_id'),
+        this.tableHasColumn('conversations', 'task_id'),
+      ]);
+      if (hasTasks && hasConversations && hasNewConversations && hasWorkspaceIdColumn && !hasTaskIdColumn) {
         // Populate new conversations table from the old one (FK enforcement is OFF, so orphans won't block)
         await this.execSql(`
           INSERT INTO "__new_conversations"("id", "task_id", "title", "created_at", "updated_at")
@@ -724,18 +731,20 @@ export class DatabaseService {
         const tag = tagByWhen?.get(migration.folderMillis);
         // If the DB already reflects the workspace->task rename (e.g. user manually fixed their DB)
         // but the migration hash wasn't recorded, mark it as applied and move on.
-        if (
-          tag === '0002_lyrical_impossible_man' &&
-          (await this.tableExists('tasks')) &&
-          !(await this.tableExists('workspaces')) &&
-          (await this.tableExists('conversations')) &&
-          (await this.tableHasColumn('conversations', 'task_id'))
-        ) {
-          await this.execSql(
-            `INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES('${migration.hash}', '${migration.folderMillis}')`
-          );
-          applied.add(migration.hash);
-          continue;
+        if (tag === '0002_lyrical_impossible_man') {
+          const [hasTasks, hasWorkspaces, hasConversations, hasTaskIdColumn] = await Promise.all([
+            this.tableExists('tasks'),
+            this.tableExists('workspaces'),
+            this.tableExists('conversations'),
+            this.tableHasColumn('conversations', 'task_id'),
+          ]);
+          if (hasTasks && !hasWorkspaces && hasConversations && hasTaskIdColumn) {
+            await this.execSql(
+              `INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES('${migration.hash}', '${migration.folderMillis}')`
+            );
+            applied.add(migration.hash);
+            continue;
+          }
         }
 
         // Execute each statement chunk (drizzle-kit uses '--> statement-breakpoint')
