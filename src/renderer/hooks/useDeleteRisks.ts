@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isActivePr, PrInfo } from '../lib/prStatus';
 import { refreshPrStatus } from '../lib/prStatusStore';
 
@@ -12,6 +12,7 @@ type RiskState = Record<
     untracked: number;
     ahead: number;
     behind: number;
+    hasPushedCommits: boolean;
     error?: string;
     pr?: PrInfo | null;
   }
@@ -21,6 +22,7 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
   const [risks, setRisks] = useState<RiskState>({});
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const isMounted = useRef(true);
 
   useEffect(() => {
     if (!enabled || tasks.length === 0) {
@@ -33,69 +35,94 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
     const load = async () => {
       setLoading(true);
       const next: RiskState = {};
-      for (const ws of tasks) {
-        try {
-          const [statusRes, infoRes, rawPr] = await Promise.allSettled([
-            (window as any).electronAPI?.getGitStatus?.(ws.path),
-            (window as any).electronAPI?.getGitInfo?.(ws.path),
-            refreshPrStatus(ws.path),
-          ]);
 
-          let staged = 0;
-          let unstaged = 0;
-          let untracked = 0;
-          if (
-            statusRes.status === 'fulfilled' &&
-            statusRes.value?.success &&
-            statusRes.value.changes
-          ) {
-            for (const change of statusRes.value.changes) {
-              if (change.status === 'untracked') {
-                untracked += 1;
-              } else if (change.isStaged) {
-                staged += 1;
-              } else {
-                unstaged += 1;
+      // Batch all task requests in parallel for better performance
+      const results = await Promise.allSettled(
+        tasks.map(async (ws) => {
+          try {
+            const [statusRes, infoRes, rawPr] = await Promise.allSettled([
+              (window as any).electronAPI?.getGitStatus?.(ws.path),
+              (window as any).electronAPI?.getGitInfo?.(ws.path),
+              refreshPrStatus(ws.path),
+            ]);
+
+            let staged = 0;
+            let unstaged = 0;
+            let untracked = 0;
+            if (
+              statusRes.status === 'fulfilled' &&
+              statusRes.value?.success &&
+              statusRes.value.changes
+            ) {
+              for (const change of statusRes.value.changes) {
+                if (change.status === 'untracked') {
+                  untracked += 1;
+                } else if (change.isStaged) {
+                  staged += 1;
+                } else {
+                  unstaged += 1;
+                }
               }
             }
+
+            const ahead =
+              infoRes.status === 'fulfilled' && typeof infoRes.value?.aheadCount === 'number'
+                ? infoRes.value.aheadCount
+                : 0;
+            const behind =
+              infoRes.status === 'fulfilled' && typeof infoRes.value?.behindCount === 'number'
+                ? infoRes.value.behindCount
+                : 0;
+            const hasPushedCommits =
+              infoRes.status === 'fulfilled' && infoRes.value?.hasPushedCommits === true;
+            const prValue = rawPr.status === 'fulfilled' ? rawPr.value : null;
+            const pr = isActivePr(prValue) ? prValue : null;
+
+            return {
+              ws,
+              statusRes,
+              info: {
+                staged,
+                unstaged,
+                untracked,
+                ahead,
+                behind,
+                hasPushedCommits,
+                error:
+                  statusRes.status === 'fulfilled'
+                    ? statusRes.value?.error
+                    : statusRes.reason?.message || String(statusRes.reason || ''),
+                pr,
+              },
+            };
+          } catch (error: any) {
+            return {
+              ws,
+              statusRes: null,
+              info: {
+                staged: 0,
+                unstaged: 0,
+                untracked: 0,
+                ahead: 0,
+                behind: 0,
+                hasPushedCommits: false,
+                error: error?.message || String(error),
+                pr: null,
+              },
+            };
           }
+        })
+      );
 
-          const ahead =
-            infoRes.status === 'fulfilled' && typeof infoRes.value?.aheadCount === 'number'
-              ? infoRes.value.aheadCount
-              : 0;
-          const behind =
-            infoRes.status === 'fulfilled' && typeof infoRes.value?.behindCount === 'number'
-              ? infoRes.value.behindCount
-              : 0;
-          const prValue = rawPr.status === 'fulfilled' ? rawPr.value : null;
-          const pr = isActivePr(prValue) ? prValue : null;
-
-          next[ws.id] = {
-            staged,
-            unstaged,
-            untracked,
-            ahead,
-            behind,
-            error:
-              statusRes.status === 'fulfilled'
-                ? statusRes.value?.error
-                : statusRes.reason?.message || String(statusRes.reason || ''),
-            pr,
-          };
-        } catch (error: any) {
-          next[ws.id] = {
-            staged: 0,
-            unstaged: 0,
-            untracked: 0,
-            ahead: 0,
-            behind: 0,
-            error: error?.message || String(error),
-            pr: null,
-          };
+      // Process results
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          next[result.value.ws.id] = result.value.info;
         }
       }
-      if (!cancelled) {
+
+      // Only update state if component is still mounted
+      if (!cancelled && isMounted.current) {
         setRisks(next);
         setLoading(false);
         setLoaded(true);
@@ -103,6 +130,7 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
     };
     void load();
     return () => {
+      isMounted.current = false;
       cancelled = true;
     };
   }, [enabled, tasks]);
@@ -119,6 +147,7 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
         status.unstaged > 0 ||
         status.untracked > 0 ||
         status.ahead > 0 ||
+        status.hasPushedCommits ||
         !!status.error ||
         (status.pr && isActivePr(status.pr));
       if (dirty) {
