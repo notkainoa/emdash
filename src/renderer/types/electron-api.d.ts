@@ -337,6 +337,7 @@ declare global {
         upstream?: string;
         aheadCount?: number;
         behindCount?: number;
+        hasPushedCommits?: boolean;
         path?: string;
         rootPath?: string;
         error?: string;
@@ -915,6 +916,7 @@ export interface ElectronAPI {
     upstream?: string;
     aheadCount?: number;
     behindCount?: number;
+    hasPushedCommits?: boolean;
     path?: string;
     error?: string;
   }>;
@@ -1180,4 +1182,3 @@ export interface ElectronAPI {
     error?: string;
   }>;
 }
-import type { TerminalSnapshotPayload } from '#types/terminalSnapshot';
