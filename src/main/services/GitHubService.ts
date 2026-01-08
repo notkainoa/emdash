@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -415,8 +415,30 @@ export class GitHubService {
       // Check if gh CLI is installed first
       await execAsync('gh --version');
 
-      // Authenticate gh CLI with our token
-      await execAsync(`echo "${token}" | gh auth login --with-token`);
+      // Authenticate gh CLI with our token - use spawn to avoid shell injection
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('gh', ['auth', 'login', '--with-token'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        child.stdin.write(token);
+        child.stdin.end();
+
+        let stderr = '';
+        child.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        child.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`gh auth login failed: ${stderr}`));
+          }
+        });
+
+        child.on('error', reject);
+      });
     } catch (error) {
       console.warn('Could not authenticate gh CLI (may not be installed):', error);
       // Don't throw - OAuth still succeeded even if gh CLI isn't available
