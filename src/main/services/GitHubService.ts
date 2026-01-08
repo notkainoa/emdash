@@ -418,7 +418,7 @@ export class GitHubService {
       // Authenticate gh CLI with our token - use spawn to avoid shell injection
       await new Promise<void>((resolve, reject) => {
         const child = spawn('gh', ['auth', 'login', '--with-token'], {
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: ['pipe', 'ignore', 'pipe'],
         });
 
         child.stdin.write(token);
