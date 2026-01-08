@@ -6,11 +6,12 @@ import { useToast } from '../hooks/use-toast';
 import { useCreatePR } from '../hooks/useCreatePR';
 import ChangesDiffModal from './ChangesDiffModal';
 import AllChangesDiffModal from './AllChangesDiffModal';
+import CodeReviewConfigModal, { type ReviewConfiguration } from './CodeReviewConfigModal';
 import { useFileChanges } from '../hooks/useFileChanges';
 import { usePrStatus } from '../hooks/usePrStatus';
 import FileTypeIcon from './ui/file-type-icon';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
-import { Plus, Undo2, ArrowUpRight, FileDiff } from 'lucide-react';
+import { Plus, Undo2, ArrowUpRight, FileDiff, Sparkles } from 'lucide-react';
 
 interface FileChangesPanelProps {
   taskId: string;
@@ -20,6 +21,7 @@ interface FileChangesPanelProps {
 const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, className }) => {
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [showAllChangesModal, setShowAllChangesModal] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
   const [stagingFiles, setStagingFiles] = useState<Set<string>>(new Set());
   const [revertingFiles, setRevertingFiles] = useState<Set<string>>(new Set());
@@ -33,6 +35,15 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
   const { pr, refresh: refreshPr } = usePrStatus(taskId);
   const [branchAhead, setBranchAhead] = useState<number | null>(null);
   const [branchStatusLoading, setBranchStatusLoading] = useState<boolean>(false);
+
+  // Handler for starting code review (placeholder - will be connected to backend later)
+  const handleStartReview = (config: ReviewConfiguration) => {
+    // TODO: Connect to backend review service - config contains the review settings
+    toast({
+      title: 'Code Review Started',
+      description: `Starting ${config.depth} review with ${config.agent} (${config.model})`,
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -222,7 +233,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
   );
 
   return (
-    <div className={`flex h-full flex-col bg-white shadow-sm dark:bg-gray-800 ${className}`}>
+    <div className={`relative flex h-full flex-col bg-white shadow-sm dark:bg-gray-800 ${className}`}>
       <div className="bg-gray-50 px-3 py-2 dark:bg-gray-900">
         {hasChanges ? (
           <div className="space-y-3">
@@ -367,7 +378,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className={`min-h-0 flex-1 overflow-y-auto ${hasChanges ? 'pb-16' : ''}`}>
         {fileChanges.map((change, index) => (
           <div
             key={index}
@@ -503,6 +514,44 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({ taskId, cl
           onRefreshChanges={refreshChanges}
         />
       )}
+
+      {/* Floating Review Changes Button */}
+      {hasChanges && (
+        <TooltipProvider delayDuration={100}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="absolute bottom-3 right-3 z-10 h-8 gap-1.5 border-gray-200 bg-white px-3 text-xs text-gray-700 shadow-md transition-all hover:border-gray-300 hover:bg-gray-50 hover:shadow-lg dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-gray-500 dark:hover:bg-gray-700"
+                onClick={() => setShowReviewModal(true)}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Review Changes
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="left"
+              className="max-w-xs border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-lg dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <p className="font-medium">AI Code Review</p>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-300">
+                Get an AI-powered analysis of your code changes
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+
+      {/* Code Review Configuration Modal */}
+      <CodeReviewConfigModal
+        open={showReviewModal}
+        onClose={() => setShowReviewModal(false)}
+        onStartReview={handleStartReview}
+        fileCount={fileChanges.length}
+        totalAdditions={totalChanges.additions}
+        totalDeletions={totalChanges.deletions}
+      />
     </div>
   );
 };
