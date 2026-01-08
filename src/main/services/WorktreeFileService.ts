@@ -121,24 +121,29 @@ export class WorktreeFileService {
     destPath: string
   ): Promise<'copied' | 'skipped' | 'error'> {
     try {
-      // Check if destination already exists
-      if (fs.existsSync(destPath)) {
-        return 'skipped';
-      }
-
       // Ensure destination directory exists
       const destDir = path.dirname(destPath);
       if (!fs.existsSync(destDir)) {
         fs.mkdirSync(destDir, { recursive: true });
       }
 
-      // Copy file preserving mode
+      // Read source file content and stats
       const content = fs.readFileSync(sourcePath);
       const stat = fs.statSync(sourcePath);
-      fs.writeFileSync(destPath, content, { mode: stat.mode });
+
+      // Use atomic exclusive creation to avoid race condition
+      // The 'wx' flag fails if the file already exists
+      const fd = fs.openSync(destPath, 'wx');
+      fs.writeSync(fd, content);
+      fs.fchmodSync(fd, stat.mode);
+      fs.closeSync(fd);
 
       return 'copied';
     } catch (error) {
+      // EEXIST error means file already exists (safe to skip)
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return 'skipped';
+      }
       log.debug(`Failed to copy ${sourcePath} to ${destPath}:`, error);
       return 'error';
     }

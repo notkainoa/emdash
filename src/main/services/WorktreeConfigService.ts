@@ -21,7 +21,9 @@ export class WorktreeConfigService {
           if (m && m[1]) {
             gitDir = path.resolve(worktreePath, m[1].trim());
           }
-        } catch {}
+        } catch (err) {
+          log.debug('Failed to read .git file for gitdir resolution', err);
+        }
       }
       const excludePath = path.join(gitDir, 'info', 'exclude');
       try {
@@ -30,15 +32,21 @@ export class WorktreeConfigService {
         let current = '';
         try {
           current = fs.readFileSync(excludePath, 'utf8');
-        } catch {}
+        } catch (err) {
+          log.debug('Failed to read .git/info/exclude', err);
+        }
         if (!current.includes('codex-stream.log')) {
           fs.appendFileSync(
             excludePath,
             (current.endsWith('\n') || current === '' ? '' : '\n') + 'codex-stream.log\n'
           );
         }
-      } catch {}
-    } catch {}
+      } catch (err) {
+        log.debug('Failed to update .git/info/exclude', err);
+      }
+    } catch (err) {
+      log.debug('Failed to set up codex log ignore', err);
+    }
   }
 
   /**
@@ -65,8 +73,8 @@ export class WorktreeConfigService {
         }
       }
 
-      // Set defaultMode to bypassPermissions
-      settings.defaultMode = 'bypassPermissions';
+      // Set defaultMode to bypassPermissions (preserve other settings)
+      settings = { ...settings, defaultMode: 'bypassPermissions' };
 
       // Write settings file
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
