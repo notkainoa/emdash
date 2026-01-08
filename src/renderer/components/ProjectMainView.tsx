@@ -66,7 +66,7 @@ function TaskRow({
   ws: Task;
   active: boolean;
   onClick: () => void;
-  onDelete: () => void | Promise<void | boolean>;
+  onDelete: (deleteBranch?: boolean) => void | Promise<void | boolean>;
   isSelectMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
@@ -358,24 +358,22 @@ function TaskRow({
               className="h-4 w-4 rounded border-muted-foreground/50 data-[state=checked]:border-muted-foreground data-[state=checked]:bg-muted-foreground"
             />
           ) : (
-            <>
-              <TaskDeleteButton
-                taskName={ws.name}
-                taskId={ws.id}
-                taskPath={ws.path}
-                onConfirm={async () => {
-                  try {
-                    setIsDeleting(true);
-                    await onDelete();
-                  } finally {
-                    setIsDeleting(false);
-                  }
-                }}
-                isDeleting={isDeleting}
-                aria-label={`Delete task ${ws.name}`}
-                className="inline-flex items-center justify-center rounded p-2 text-muted-foreground hover:bg-transparent focus-visible:ring-0"
-              />
-            </>
+            <TaskDeleteButton
+              taskName={ws.name}
+              taskId={ws.id}
+              taskPath={ws.path}
+              onConfirm={async (deleteBranch) => {
+                try {
+                  setIsDeleting(true);
+                  await onDelete(deleteBranch);
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+              isDeleting={isDeleting}
+              aria-label={`Delete task ${ws.name}`}
+              className="inline-flex items-center justify-center rounded p-2 text-muted-foreground hover:bg-transparent focus-visible:ring-0"
+            />
           )}
         </div>
       </div>
@@ -404,7 +402,7 @@ interface ProjectMainViewProps {
   onDeleteTask: (
     project: Project,
     task: Task,
-    options?: { silent?: boolean }
+    options?: { silent?: boolean; deleteBranch?: boolean }
   ) => void | Promise<void | boolean>;
   isCreatingTask?: boolean;
   onDeleteProject?: (project: Project) => void | Promise<void>;
