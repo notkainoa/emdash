@@ -1,5 +1,6 @@
 import { ipcMain, app } from 'electron';
 import { log } from '../lib/logger';
+import { slugify } from '../lib/worktreeUtils';
 import { GitHubService } from '../services/GitHubService';
 import { worktreeService } from '../services/WorktreeService';
 import { githubCLIInstaller } from '../services/GitHubCLIInstaller';
@@ -11,13 +12,6 @@ import { homedir } from 'os';
 
 const execAsync = promisify(exec);
 const githubService = new GitHubService();
-
-const slugify = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
 
 export function registerGithubIpc() {
   ipcMain.handle('github:connect', async (_, projectPath: string) => {

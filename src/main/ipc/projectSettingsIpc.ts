@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { log } from '../lib/logger';
 import { projectSettingsService } from '../services/ProjectSettingsService';
-import { worktreeService } from '../services/WorktreeService';
+import * as GitService from '../services/GitService';
 
 type ProjectSettingsArgs = { projectId: string };
 type UpdateProjectSettingsArgs = { projectId: string; baseRef: string };
@@ -77,7 +77,7 @@ export function registerProjectSettingsIpc() {
         if (!projectPath) {
           throw new Error('projectPath is required');
         }
-        const info = await worktreeService.fetchLatestBaseRef(projectPath, projectId);
+        const info = await GitService.fetchLatestBaseRef(projectPath, projectId);
         return {
           success: true,
           baseRef: info.fullRef,
