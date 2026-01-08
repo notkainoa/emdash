@@ -66,7 +66,7 @@ function TaskRow({
   ws: Task;
   active: boolean;
   onClick: () => void;
-  onDelete: () => void | Promise<void | boolean>;
+  onDelete: (deleteBranch?: boolean) => void | Promise<void | boolean>;
   isSelectMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
@@ -360,10 +360,10 @@ function TaskRow({
               taskName={ws.name}
               taskId={ws.id}
               taskPath={ws.path}
-              onConfirm={async () => {
+              onConfirm={async (deleteBranch) => {
                 try {
                   setIsDeleting(true);
-                  await onDelete();
+                  await onDelete(deleteBranch);
                 } finally {
                   setIsDeleting(false);
                 }
@@ -400,7 +400,7 @@ interface ProjectMainViewProps {
   onDeleteTask: (
     project: Project,
     task: Task,
-    options?: { silent?: boolean }
+    options?: { silent?: boolean; deleteBranch?: boolean }
   ) => void | Promise<void | boolean>;
   isCreatingTask?: boolean;
   onDeleteProject?: (project: Project) => void | Promise<void>;
