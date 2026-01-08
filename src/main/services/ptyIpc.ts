@@ -60,7 +60,7 @@ export function registerPtyIpc(): void {
 
         const proc =
           existing ??
-          startPty({
+          (await startPty({
             id,
             cwd,
             shell,
@@ -70,7 +70,7 @@ export function registerPtyIpc(): void {
             autoApprove,
             initialPrompt,
             skipResume: shouldSkipResume,
-          });
+          }));
         const envKeys = env ? Object.keys(env) : [];
         const planEnv = env && (env.EMDASH_PLAN_MODE || env.EMDASH_PLAN_FILE) ? true : false;
         log.debug('pty:start OK', {

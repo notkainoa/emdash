@@ -1,7 +1,11 @@
 import os from 'os';
 import type { IPty } from 'node-pty';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { log } from '../lib/logger';
 import { PROVIDERS } from '@shared/providers/registry';
+
+const execAsync = promisify(exec);
 
 type PtyRecord = {
   id: string;
@@ -18,7 +22,7 @@ function getDefaultShell(): string {
   return process.env.SHELL || '/bin/bash';
 }
 
-export function startPty(options: {
+export async function startPty(options: {
   id: string;
   cwd?: string;
   shell?: string;
@@ -78,20 +82,20 @@ export function startPty(options: {
   if (process.platform === 'win32' && shell && !shell.includes('\\') && !shell.includes('/')) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { execSync } = require('child_process');
+      const fs = require('fs');
 
       // Try .cmd first (npm globals are typically .cmd files)
       let resolved = '';
       try {
-        resolved = execSync(`where ${shell}.cmd`, { encoding: 'utf8' })
-          .trim()
+        resolved = (await execAsync(`where ${shell}.cmd`, { encoding: 'utf8' }))
+          .stdout.trim()
           .split('\n')[0]
           .replace(/\r/g, '')
           .trim();
       } catch {
         // If .cmd doesn't exist, try without extension
-        resolved = execSync(`where ${shell}`, { encoding: 'utf8' })
-          .trim()
+        resolved = (await execAsync(`where ${shell}`, { encoding: 'utf8' }))
+          .stdout.trim()
           .split('\n')[0]
           .replace(/\r/g, '')
           .trim();
@@ -102,8 +106,6 @@ export function startPty(options: {
         // If no executable extension, try appending .cmd
         const cmdPath = resolved + '.cmd';
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const fs = require('fs');
           if (fs.existsSync(cmdPath)) {
             resolved = cmdPath;
           }
