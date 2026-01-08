@@ -852,7 +852,6 @@ export class DatabaseService {
   }
 
   private async tableHasColumn(tableName: string, columnName: string): Promise<boolean> {
-    if (!(await this.tableExists(tableName))) return false;
     const rows = await this.allSql<{ name: string }>(
       `PRAGMA table_info("${tableName.replace(/"/g, '""')}")`
     );
