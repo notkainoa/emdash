@@ -1579,7 +1579,7 @@ const AppContent: React.FC = () => {
   const handleDeleteTask = async (
     targetProject: Project,
     task: Task,
-    options?: { silent?: boolean }
+    options?: { silent?: boolean; deleteBranch?: boolean }
   ): Promise<boolean> => {
     if (deletingTaskIdsRef.current.has(task.id)) {
       toast({
@@ -1638,8 +1638,8 @@ const AppContent: React.FC = () => {
           })
         );
 
-        // Only remove worktree if the task was created with one
-        const shouldRemoveWorktree = task.useWorktree !== false;
+        // Only remove worktree if the task was created with one AND user wants to delete the branch
+        const shouldRemoveWorktree = task.useWorktree !== false && options?.deleteBranch !== false;
 
         const promises: Promise<any>[] = [window.electronAPI.deleteTask(task.id)];
 

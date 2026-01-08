@@ -24,7 +24,7 @@ type Props = {
   taskName: string;
   taskId: string;
   taskPath: string;
-  onConfirm: () => void | Promise<void | boolean>;
+  onConfirm: (deleteBranch?: boolean) => void | Promise<void | boolean>;
   className?: string;
   'aria-label'?: string;
   isDeleting?: boolean;
@@ -41,6 +41,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
 }) => {
   const [open, setOpen] = React.useState(false);
   const [acknowledge, setAcknowledge] = React.useState(false);
+  const [acknowledgeBranchDelete, setAcknowledgeBranchDelete] = React.useState(false);
   const targets = useMemo(
     () => [{ id: taskId, name: taskName, path: taskPath }],
     [taskId, taskName, taskPath]
@@ -52,6 +53,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
     untracked: 0,
     ahead: 0,
     behind: 0,
+    hasPushedCommits: false,
     error: undefined,
     pr: null,
   };
@@ -61,13 +63,29 @@ export const TaskDeleteButton: React.FC<Props> = ({
     status.unstaged > 0 ||
     status.untracked > 0 ||
     status.ahead > 0 ||
+    status.hasPushedCommits ||
     !!status.error ||
     !!(status.pr && isActivePr(status.pr));
-  const disableDelete: boolean = Boolean(isDeleting || loading) || (risky && !acknowledge);
+
+  // Check if this is a "pushed commits only" scenario (no other risks)
+  const hasPushedOnly =
+    !status.staged &&
+    !status.unstaged &&
+    !status.untracked &&
+    !status.ahead &&
+    status.hasPushedCommits &&
+    !status.error &&
+    !(status.pr && isActivePr(status.pr));
+
+  const disableDelete: boolean =
+    Boolean(isDeleting || loading) ||
+    (risky && !acknowledge) ||
+    (hasPushedOnly && !acknowledgeBranchDelete);
 
   React.useEffect(() => {
     if (!open) {
       setAcknowledge(false);
+      setAcknowledgeBranchDelete(false);
     }
   }, [open]);
 
@@ -174,6 +192,23 @@ export const TaskDeleteButton: React.FC<Props> = ({
             ) : null}
           </AnimatePresence>
           <AnimatePresence initial={false}>
+            {status.hasPushedCommits && !loading ? (
+              <motion.div
+                key="pushed-commits-warning"
+                initial={{ opacity: 0, y: 6, scale: 0.99 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 6, scale: 0.99 }}
+                transition={{ duration: 0.18, ease: 'easeOut', delay: 0.04 }}
+                className="rounded-md border border-red-300/60 bg-red-50 px-3 py-2 text-red-900 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-50"
+              >
+                <p className="font-medium">Branch has pushed commits</p>
+                <p className="text-xs text-muted-foreground">
+                  Deleting this task will delete the branch and these commits will be lost.
+                </p>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+          <AnimatePresence initial={false}>
             {risky && !loading ? (
               <motion.label
                 key="ack-delete"
@@ -193,6 +228,28 @@ export const TaskDeleteButton: React.FC<Props> = ({
               </motion.label>
             ) : null}
           </AnimatePresence>
+          <AnimatePresence initial={false}>
+            {status.hasPushedCommits && !loading ? (
+              <motion.label
+                key="ack-branch-delete"
+                className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/30 px-3 py-2"
+                initial={{ opacity: 0, y: 6, scale: 0.99 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 6, scale: 0.99 }}
+                transition={{ duration: 0.18, ease: 'easeOut', delay: 0.06 }}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={acknowledgeBranchDelete}
+                  onChange={(e) => setAcknowledgeBranchDelete(e.target.checked)}
+                />
+                <span className="text-sm leading-tight text-foreground">
+                  Delete branch and lose all changes
+                </span>
+              </motion.label>
+            ) : null}
+          </AnimatePresence>
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
@@ -203,7 +260,11 @@ export const TaskDeleteButton: React.FC<Props> = ({
               e.stopPropagation();
               setOpen(false);
               try {
-                await onConfirm();
+                // Determine if branch should be deleted:
+                // - If there are pushed commits, only delete if checkbox is checked
+                // - Otherwise, default to true (preserve current behavior)
+                const deleteBranch = status.hasPushedCommits ? acknowledgeBranchDelete : true;
+                await onConfirm(deleteBranch);
               } catch {}
             }}
           >
