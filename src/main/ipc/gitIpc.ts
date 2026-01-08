@@ -17,6 +17,232 @@ import { databaseService } from '../services/DatabaseService';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
+/**
+ * Helper: Ensure all changes are committed before creating PR
+ */
+async function ensureCommitted(taskPath: string): Promise<string[]> {
+  const outputs: string[] = [];
+  try {
+    const { stdout: statusOut } = await execAsync(
+      'git status --porcelain --untracked-files=all',
+      { cwd: taskPath }
+    );
+    if (statusOut && statusOut.trim().length > 0) {
+      const { stdout: addOut, stderr: addErr } = await execAsync('git add -A', {
+        cwd: taskPath,
+      });
+      if (addOut?.trim()) outputs.push(addOut.trim());
+      if (addErr?.trim()) outputs.push(addErr.trim());
+
+      const commitMsg = 'stagehand: prepare pull request';
+      try {
+        const { stdout: commitOut, stderr: commitErr } = await execAsync(
+          `git commit -m ${JSON.stringify(commitMsg)}`,
+          { cwd: taskPath }
+        );
+        if (commitOut?.trim()) outputs.push(commitOut.trim());
+        if (commitErr?.trim()) outputs.push(commitErr.trim());
+      } catch (commitErr) {
+        const msg = commitErr as string;
+        if (msg && /nothing to commit/i.test(msg)) {
+          outputs.push('git commit: nothing to commit');
+        } else {
+          throw commitErr;
+        }
+      }
+    }
+  } catch (stageErr) {
+    log.warn('Failed to stage/commit changes before PR:', stageErr as string);
+  }
+  return outputs;
+}
+
+/**
+ * Helper: Ensure branch is pushed to origin
+ */
+async function ensurePushed(taskPath: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    await execAsync('git push', { cwd: taskPath });
+    return { success: true };
+  } catch (pushErr) {
+    try {
+      const { stdout: branchOut } = await execAsync('git rev-parse --abbrev-ref HEAD', {
+        cwd: taskPath,
+      });
+      const branch = branchOut.trim();
+      await execAsync(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
+        cwd: taskPath,
+      });
+      return { success: true };
+    } catch (pushErr2) {
+      log.error('Failed to push branch before PR:', pushErr2 as string);
+      return {
+        success: false,
+        error: 'Failed to push branch to origin. Please check your Git remotes and authentication.',
+      };
+    }
+  }
+}
+
+/**
+ * Helper: Resolve repository name with owner (e.g., "owner/repo")
+ */
+async function resolveRepoNameWithOwner(taskPath: string): Promise<string> {
+  try {
+    const { stdout: repoOut } = await execAsync(
+      'gh repo view --json nameWithOwner -q .nameWithOwner',
+      { cwd: taskPath }
+    );
+    return (repoOut || '').trim();
+  } catch {
+    try {
+      const { stdout: urlOut } = await execAsync('git remote get-url origin', {
+        cwd: taskPath,
+      });
+      const url = (urlOut || '').trim();
+      // Handle both SSH and HTTPS forms
+      const m =
+        url.match(/github\.com[/:]([^/]+)\/([^/.]+)(?:\.git)?$/i) ||
+        url.match(/([^/:]+)[:/]([^/]+)\/([^/.]+)(?:\.git)?$/i);
+      if (m) {
+        const owner = m[1].includes('github.com') ? m[1].split('github.com').pop() : m[1];
+        const repo = m[2] || m[3];
+        return `${owner}/${repo}`.replace(/^\/*/, '');
+      }
+    } catch (err) {
+      log.debug('Failed to resolve repo name from git remote', { taskPath, err });
+    }
+  }
+  return '';
+}
+
+/**
+ * Helper: Get current branch name
+ */
+async function getCurrentBranch(taskPath: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync('git branch --show-current', { cwd: taskPath });
+    return (stdout || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Helper: Get default branch name (fallback to 'main')
+ */
+async function getDefaultBranch(taskPath: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync(
+      'gh repo view --json defaultBranchRef -q .defaultBranchRef.name',
+      { cwd: taskPath }
+    );
+    const db = (stdout || '').trim();
+    if (db) return db;
+  } catch (err) {
+    log.debug('Failed to get default branch from gh CLI', { taskPath, err });
+  }
+  try {
+    const { stdout } = await execAsync(
+      'git remote show origin | sed -n "/HEAD branch/s/.*: //p"',
+      { cwd: taskPath }
+    );
+    const db2 = (stdout || '').trim();
+    if (db2) return db2;
+  } catch (err) {
+    log.debug('Failed to get default branch from git remote', { taskPath, err });
+  }
+  return 'main';
+}
+
+/**
+ * Helper: Validate that there's at least one commit ahead of base
+ */
+async function validateAheadCount(
+  taskPath: string,
+  baseRef: string
+): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const { stdout: aheadOut } = await execAsync(
+      `git rev-list --count ${JSON.stringify(`origin/${baseRef}`)}..HEAD`,
+      { cwd: taskPath }
+    );
+    const aheadCount = parseInt((aheadOut || '0').trim(), 10) || 0;
+    if (aheadCount <= 0) {
+      return {
+        valid: false,
+        error: `No commits to create a PR. Make a commit on current branch ahead of base '${baseRef}'.`,
+      };
+    }
+  } catch (err) {
+    log.debug('Failed to validate ahead count (non-fatal)', { taskPath, baseRef, err });
+  }
+  return { valid: true };
+}
+
+/**
+ * Helper: Build gh pr create command flags
+ */
+interface BuildPrFlagsResult {
+  flags: string[];
+  bodyFile: string | null;
+}
+
+async function buildPrCreateFlags(
+  taskPath: string,
+  title: string | undefined,
+  body: string | undefined,
+  base: string | undefined,
+  head: string | undefined,
+  draft: boolean | undefined,
+  web: boolean | undefined,
+  fill: boolean | undefined,
+  repoNameWithOwner: string,
+  currentBranch: string,
+  defaultBranch: string
+): Promise<BuildPrFlagsResult> {
+  const flags: string[] = [];
+  let bodyFile: string | null = null;
+
+  if (repoNameWithOwner) flags.push(`--repo ${JSON.stringify(repoNameWithOwner)}`);
+  if (title) flags.push(`--title ${JSON.stringify(title)}`);
+
+  // Use temp file for body to properly handle newlines and multiline content
+  if (body) {
+    try {
+      bodyFile = path.join(
+        os.tmpdir(),
+        `gh-pr-body-${Date.now()}-${Math.random().toString(36).substring(7)}.txt`
+      );
+      // Write body with actual newlines preserved
+      fs.writeFileSync(bodyFile, body, 'utf8');
+      flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
+    } catch (writeError) {
+      log.warn('Failed to write body to temp file, falling back to --body flag', {
+        writeError,
+      });
+      // Fallback to direct --body flag if temp file creation fails
+      flags.push(`--body ${JSON.stringify(body)}`);
+    }
+  }
+
+  if (base || defaultBranch) flags.push(`--base ${JSON.stringify(base || defaultBranch)}`);
+  if (head) {
+    flags.push(`--head ${JSON.stringify(head)}`);
+  } else if (currentBranch) {
+    // Prefer owner:branch form when repo is known; otherwise branch name
+    const headRef = repoNameWithOwner
+      ? `${repoNameWithOwner.split('/')[0]}:${currentBranch}`
+      : currentBranch;
+    flags.push(`--head ${JSON.stringify(headRef)}`);
+  }
+  if (draft) flags.push('--draft');
+  if (web) flags.push('--web');
+  if (fill) flags.push('--fill');
+
+  return { flags, bodyFile };
+}
+
 export function registerGitIpc() {
   function resolveGitBin(): string {
     // Allow override via env
@@ -149,175 +375,46 @@ export function registerGitIpc() {
       try {
         const outputs: string[] = [];
 
-        // Stage and commit any pending changes
-        try {
-          const { stdout: statusOut } = await execAsync(
-            'git status --porcelain --untracked-files=all',
-            {
-              cwd: taskPath,
-            }
-          );
-          if (statusOut && statusOut.trim().length > 0) {
-            const { stdout: addOut, stderr: addErr } = await execAsync('git add -A', {
-              cwd: taskPath,
-            });
-            if (addOut?.trim()) outputs.push(addOut.trim());
-            if (addErr?.trim()) outputs.push(addErr.trim());
+        // Step 1: Ensure all changes are committed
+        const commitOutputs = await ensureCommitted(taskPath);
+        outputs.push(...commitOutputs);
 
-            const commitMsg = 'stagehand: prepare pull request';
-            try {
-              const { stdout: commitOut, stderr: commitErr } = await execAsync(
-                `git commit -m ${JSON.stringify(commitMsg)}`,
-                { cwd: taskPath }
-              );
-              if (commitOut?.trim()) outputs.push(commitOut.trim());
-              if (commitErr?.trim()) outputs.push(commitErr.trim());
-            } catch (commitErr) {
-              const msg = commitErr as string;
-              if (msg && /nothing to commit/i.test(msg)) {
-                outputs.push('git commit: nothing to commit');
-              } else {
-                throw commitErr;
-              }
-            }
-          }
-        } catch (stageErr) {
-          log.warn('Failed to stage/commit changes before PR:', stageErr as string);
-          // Continue; PR may still be created for existing commits
+        // Step 2: Ensure branch is pushed to origin
+        const pushResult = await ensurePushed(taskPath);
+        if (!pushResult.success) {
+          return { success: false, error: pushResult.error };
+        }
+        outputs.push('git push: success');
+
+        // Step 3: Resolve repository information
+        const repoNameWithOwner = await resolveRepoNameWithOwner(taskPath);
+        const currentBranch = await getCurrentBranch(taskPath);
+        const defaultBranch = await getDefaultBranch(taskPath);
+
+        // Step 4: Validate that we have commits to create a PR
+        const baseRef = base || defaultBranch;
+        const validation = await validateAheadCount(taskPath, baseRef);
+        if (!validation.valid) {
+          return {
+            success: false,
+            error: validation.error || 'No commits to create a PR.',
+          };
         }
 
-        // Ensure branch is pushed to origin so PR includes latest commit
-        try {
-          await execAsync('git push', { cwd: taskPath });
-          outputs.push('git push: success');
-        } catch (pushErr) {
-          try {
-            const { stdout: branchOut } = await execAsync('git rev-parse --abbrev-ref HEAD', {
-              cwd: taskPath,
-            });
-            const branch = branchOut.trim();
-            await execAsync(`git push --set-upstream origin ${JSON.stringify(branch)}`, {
-              cwd: taskPath,
-            });
-            outputs.push(`git push --set-upstream origin ${branch}: success`);
-          } catch (pushErr2) {
-            log.error('Failed to push branch before PR:', pushErr2 as string);
-            return {
-              success: false,
-              error:
-                'Failed to push branch to origin. Please check your Git remotes and authentication.',
-            };
-          }
-        }
-
-        // Resolve repo owner/name (prefer gh, fallback to parsing origin url)
-        let repoNameWithOwner = '';
-        try {
-          const { stdout: repoOut } = await execAsync(
-            'gh repo view --json nameWithOwner -q .nameWithOwner',
-            { cwd: taskPath }
-          );
-          repoNameWithOwner = (repoOut || '').trim();
-        } catch {
-          try {
-            const { stdout: urlOut } = await execAsync('git remote get-url origin', {
-              cwd: taskPath,
-            });
-            const url = (urlOut || '').trim();
-            // Handle both SSH and HTTPS forms
-            const m =
-              url.match(/github\.com[/:]([^/]+)\/([^/.]+)(?:\.git)?$/i) ||
-              url.match(/([^/:]+)[:/]([^/]+)\/([^/.]+)(?:\.git)?$/i);
-            if (m) {
-              const owner = m[1].includes('github.com') ? m[1].split('github.com').pop() : m[1];
-              const repo = m[2] || m[3];
-              repoNameWithOwner = `${owner}/${repo}`.replace(/^\/*/, '');
-            }
-          } catch {}
-        }
-
-        // Determine current branch and default base branch (fallback to main)
-        let currentBranch = '';
-        try {
-          const { stdout } = await execAsync('git branch --show-current', { cwd: taskPath });
-          currentBranch = (stdout || '').trim();
-        } catch {}
-        let defaultBranch = 'main';
-        try {
-          const { stdout } = await execAsync(
-            'gh repo view --json defaultBranchRef -q .defaultBranchRef.name',
-            { cwd: taskPath }
-          );
-          const db = (stdout || '').trim();
-          if (db) defaultBranch = db;
-        } catch {
-          try {
-            const { stdout } = await execAsync(
-              'git remote show origin | sed -n "/HEAD branch/s/.*: //p"',
-              { cwd: taskPath }
-            );
-            const db2 = (stdout || '').trim();
-            if (db2) defaultBranch = db2;
-          } catch {}
-        }
-
-        // Guard: ensure there is at least one commit ahead of base
-        try {
-          const baseRef = base || defaultBranch;
-          const { stdout: aheadOut } = await execAsync(
-            `git rev-list --count ${JSON.stringify(`origin/${baseRef}`)}..HEAD`,
-            { cwd: taskPath }
-          );
-          const aheadCount = parseInt((aheadOut || '0').trim(), 10) || 0;
-          if (aheadCount <= 0) {
-            return {
-              success: false,
-              error: `No commits to create a PR. Make a commit on 
-current branch '${currentBranch}' ahead of base '${baseRef}'.`,
-            };
-          }
-        } catch {
-          // Non-fatal; continue
-        }
-
-        // Build gh pr create command with explicit repo/base/head for reliability
-        const flags: string[] = [];
-        if (repoNameWithOwner) flags.push(`--repo ${JSON.stringify(repoNameWithOwner)}`);
-        if (title) flags.push(`--title ${JSON.stringify(title)}`);
-
-        // Use temp file for body to properly handle newlines and multiline content
-        let bodyFile: string | null = null;
-        if (body) {
-          try {
-            bodyFile = path.join(
-              os.tmpdir(),
-              `gh-pr-body-${Date.now()}-${Math.random().toString(36).substring(7)}.txt`
-            );
-            // Write body with actual newlines preserved
-            fs.writeFileSync(bodyFile, body, 'utf8');
-            flags.push(`--body-file ${JSON.stringify(bodyFile)}`);
-          } catch (writeError) {
-            log.warn('Failed to write body to temp file, falling back to --body flag', {
-              writeError,
-            });
-            // Fallback to direct --body flag if temp file creation fails
-            flags.push(`--body ${JSON.stringify(body)}`);
-          }
-        }
-
-        if (base || defaultBranch) flags.push(`--base ${JSON.stringify(base || defaultBranch)}`);
-        if (head) {
-          flags.push(`--head ${JSON.stringify(head)}`);
-        } else if (currentBranch) {
-          // Prefer owner:branch form when repo is known; otherwise branch name
-          const headRef = repoNameWithOwner
-            ? `${repoNameWithOwner.split('/')[0]}:${currentBranch}`
-            : currentBranch;
-          flags.push(`--head ${JSON.stringify(headRef)}`);
-        }
-        if (draft) flags.push('--draft');
-        if (web) flags.push('--web');
-        if (fill) flags.push('--fill');
+        // Step 5: Build gh pr create command flags
+        const { flags, bodyFile } = await buildPrCreateFlags(
+          taskPath,
+          title,
+          body,
+          base,
+          head,
+          draft,
+          web,
+          fill,
+          repoNameWithOwner,
+          currentBranch,
+          defaultBranch
+        );
 
         const cmd = `gh pr create ${flags.join(' ')}`.trim();
 
@@ -653,7 +750,35 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         } catch {}
       }
 
-      return { success: true, branch, defaultBranch, ahead, behind };
+      // Check if there are pushed commits on the remote branch
+      let hasPushedCommits = false;
+      try {
+        // Check if remote branch exists
+        const { stdout: remoteRef } = await execFileAsync(
+          GIT,
+          ['rev-parse', '--verify', `origin/${branch}`],
+          { cwd: taskPath }
+        );
+
+        if (remoteRef.trim()) {
+          // Remote branch exists - check if it differs from base
+          const { stdout: mergeBase } = await execFileAsync(
+            GIT,
+            ['merge-base', `origin/${defaultBranch}`, `origin/${branch}`],
+            { cwd: taskPath }
+          );
+          const baseRef = mergeBase.trim();
+          const remoteRefHash = remoteRef.trim();
+
+          // If remote branch is different from the merge base, there are pushed commits
+          hasPushedCommits = remoteRefHash !== baseRef;
+        }
+      } catch {
+        // Remote branch doesn't exist or other error - no pushed commits
+        hasPushedCommits = false;
+      }
+
+      return { success: true, branch, defaultBranch, ahead, behind, hasPushedCommits };
     } catch (error) {
       log.error('Failed to get branch status:', error);
       return { success: false, error: error as string };
