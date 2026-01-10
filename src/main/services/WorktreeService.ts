@@ -14,6 +14,25 @@ type BaseRefInfo = { remote: string; branch: string; fullRef: string };
 
 const execFileAsync = promisify(execFile);
 
+// GLM environment variable names
+const GLM_ENV_VARS = {
+  ANTHROPIC_AUTH_TOKEN: 'ANTHROPIC_AUTH_TOKEN',
+  ANTHROPIC_BASE_URL: 'ANTHROPIC_BASE_URL',
+  API_TIMEOUT_MS: 'API_TIMEOUT_MS',
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  ANTHROPIC_DEFAULT_SONNET_MODEL: 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  ANTHROPIC_DEFAULT_OPUS_MODEL: 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+} as const;
+
+// GLM configuration values
+const GLM_CONFIG = {
+  BASE_URL: 'https://api.z.ai/api/anthropic',
+  API_TIMEOUT_MS: '300000', // 5 minutes
+  DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
+  DEFAULT_SONNET_MODEL: 'glm-4.7',
+  DEFAULT_OPUS_MODEL: 'glm-4.7',
+} as const;
+
 export interface WorktreeInfo {
   id: string;
   name: string;
@@ -955,22 +974,15 @@ export class WorktreeService {
       }
 
       const env = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
-      const keys = [
-        'ANTHROPIC_AUTH_TOKEN',
-        'ANTHROPIC_BASE_URL',
-        'API_TIMEOUT_MS',
-        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-        'ANTHROPIC_DEFAULT_SONNET_MODEL',
-        'ANTHROPIC_DEFAULT_OPUS_MODEL',
-      ];
+      const keys = Object.values(GLM_ENV_VARS);
 
       if (hasKey) {
-        env.ANTHROPIC_AUTH_TOKEN = cleanKey;
-        env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic';
-        env.API_TIMEOUT_MS = '3000000';
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-4.5-air';
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4.7';
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-4.7';
+        env[GLM_ENV_VARS.ANTHROPIC_AUTH_TOKEN] = cleanKey;
+        env[GLM_ENV_VARS.ANTHROPIC_BASE_URL] = GLM_CONFIG.BASE_URL;
+        env[GLM_ENV_VARS.API_TIMEOUT_MS] = GLM_CONFIG.API_TIMEOUT_MS;
+        env[GLM_ENV_VARS.ANTHROPIC_DEFAULT_HAIKU_MODEL] = GLM_CONFIG.DEFAULT_HAIKU_MODEL;
+        env[GLM_ENV_VARS.ANTHROPIC_DEFAULT_SONNET_MODEL] = GLM_CONFIG.DEFAULT_SONNET_MODEL;
+        env[GLM_ENV_VARS.ANTHROPIC_DEFAULT_OPUS_MODEL] = GLM_CONFIG.DEFAULT_OPUS_MODEL;
       } else {
         for (const key of keys) {
           delete env[key];
