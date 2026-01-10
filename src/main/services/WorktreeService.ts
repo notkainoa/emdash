@@ -1220,7 +1220,10 @@ export class WorktreeService {
             log.warn('Existing .claude/settings.local.json was not an object, will overwrite');
           }
         } catch (parseErr) {
-          log.warn('Failed to parse existing .claude/settings.local.json, will overwrite', parseErr);
+          log.warn(
+            'Failed to parse existing .claude/settings.local.json, will overwrite',
+            parseErr
+          );
         }
       } catch (accessErr) {
         // File doesn't exist or couldn't be read, use empty settings
@@ -1254,7 +1257,10 @@ export class WorktreeService {
           await fs.promises.unlink(settingsPath);
           log.info(`Removed .claude/settings.local.json for GLM in ${worktreePath}`);
         } catch (err) {
-          log.warn('Failed to remove .claude/settings.local.json for GLM', { worktreePath, error: err });
+          log.warn('Failed to remove .claude/settings.local.json for GLM', {
+            worktreePath,
+            error: err,
+          });
         }
         return;
       }

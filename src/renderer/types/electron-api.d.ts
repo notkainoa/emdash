@@ -215,7 +215,7 @@ declare global {
           };
         };
         error?: string;
-      }>; 
+      }>;
 
       // Claude Code (GLM) key management
       claudeGlmSaveKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>;

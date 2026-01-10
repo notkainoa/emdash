@@ -23,7 +23,11 @@ import {
 } from '@/lib/containerRuns';
 import { useBrowser } from '@/providers/BrowserProvider';
 import { useTaskTerminals } from '@/lib/taskTerminalsStore';
-import { PROVIDER_IDS, getInstallCommandForProvider, type ProviderId } from '@shared/providers/registry';
+import {
+  PROVIDER_IDS,
+  getInstallCommandForProvider,
+  type ProviderId,
+} from '@shared/providers/registry';
 import { useAutoScrollOnTaskSwitch } from '@/hooks/useAutoScrollOnTaskSwitch';
 import { terminalSessionRegistry } from '../terminal/SessionRegistry';
 import { TaskScopeProvider } from './TaskScopeContext';
