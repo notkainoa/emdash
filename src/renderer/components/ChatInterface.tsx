@@ -67,15 +67,23 @@ const ChatInterface: React.FC<Props> = ({
   // Auto-scroll to bottom when this task becomes active
   useAutoScrollOnTaskSwitch(true, task.id);
 
+  const useAcpChat = provider === 'codex' && chatUiEnabled;
+
   // Unified Plan Mode (per task)
-  const { enabled: planEnabled, setEnabled: setPlanEnabled } = usePlanMode(task.id, task.path);
+  const planScope = useMemo(
+    () => `${useAcpChat ? 'acp' : 'cli'}:${provider}`,
+    [useAcpChat, provider]
+  );
+  const { enabled: planEnabled, setEnabled: setPlanEnabled } = usePlanMode(
+    task.id,
+    task.path,
+    planScope
+  );
 
   // Log transitions for visibility
   useEffect(() => {
     log.info('[plan] state changed', { taskId: task.id, enabled: planEnabled });
   }, [planEnabled, task.id]);
-
-  const useAcpChat = provider === 'codex' && chatUiEnabled;
 
   // For terminal providers with native plan activation commands
   usePlanActivationTerminal({
@@ -681,6 +689,8 @@ const ChatInterface: React.FC<Props> = ({
         provider={provider}
         isProviderInstalled={isProviderInstalled}
         runInstallCommand={runInstallCommand}
+        planModeEnabled={planEnabled}
+        setPlanModeEnabled={setPlanEnabled}
       />
     );
   }

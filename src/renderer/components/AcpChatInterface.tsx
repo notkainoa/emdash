@@ -28,7 +28,14 @@ import { type Provider } from '../types';
 import InstallBanner from './InstallBanner';
 import { Button } from './ui/button';
 import { getInstallCommandForProvider } from '@shared/providers/registry';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+import { Spinner } from './ui/spinner';
 
 // OpenAI logo SVG component
 const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
@@ -41,134 +48,24 @@ const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
     <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
   </svg>
 );
-import { Spinner } from './ui/spinner';
+
 import { AnimatePresence, motion } from 'motion/react';
 import { Badge } from './ui/badge';
 import { cn } from '@/lib/utils';
-import { extractCurrentModelId, extractModelsFromPayload } from '@shared/acpUtils';
-import type { AcpConfigOption, AcpModel } from '@shared/types/acp';
-import { usePlanMode } from '@/hooks/usePlanMode';
+import { useAcpSession } from '@/lib/acpSessions';
+import {
+  type ContentBlock,
+  type DiffPreview,
+  type FeedItem,
+  type PermissionRequest,
+  type ToolCall,
+  buildDiffPreview,
+  getTailLines,
+  splitLines,
+  truncateText,
+} from '@/lib/acpChatUtils';
+import type { AcpConfigOption } from '@shared/types/acp';
 import { logPlanEvent } from '@/lib/planLogs';
-
-type ContentBlock = {
-  type: string;
-  text?: string;
-  data?: string;
-  mimeType?: string;
-  name?: string;
-  uri?: string;
-  description?: string;
-  title?: string;
-  size?: number;
-  resource?: {
-    uri?: string;
-    mimeType?: string;
-    text?: string;
-    blob?: string;
-    name?: string;
-    title?: string;
-    description?: string;
-    size?: number;
-  };
-};
-
-type ToolCallContent =
-  | { type: 'content'; content: ContentBlock }
-  | { type: 'diff'; path?: string; oldText?: string; newText?: string; preview?: DiffPreview }
-  | { type: 'terminal'; terminalId: string };
-
-type ToolCall = {
-  toolCallId: string;
-  title?: string;
-  kind?: string;
-  status?: string;
-  locations?: Array<{ path: string; line?: number }>;
-  content?: ToolCallContent[];
-  rawInput?: string;
-  rawOutput?: string;
-};
-
-type DiffPreviewLine = { type: 'context' | 'add' | 'del'; text: string };
-type DiffPreview = {
-  path?: string;
-  lines: DiffPreviewLine[];
-  additions: number;
-  deletions: number;
-  truncated: boolean;
-};
-
-type FeedItem =
-  | {
-      id: string;
-      type: 'message';
-      role: 'user' | 'assistant' | 'system';
-      blocks: ContentBlock[];
-      streaming?: boolean;
-      messageKind?: 'thought' | 'system';
-      runDurationMs?: number;
-    }
-  | { id: string; type: 'tool'; toolCallId: string }
-  | {
-      id: string;
-      type: 'plan';
-      entries: Array<{ content?: string; status?: string; priority?: string }>;
-    }
-  | { id: string; type: 'permission'; requestId: number };
-
-type AcpMetaType = 'message' | 'tool' | 'plan';
-
-type AcpMessageItem = {
-  role: 'user' | 'assistant' | 'system';
-  blocks: ContentBlock[];
-  messageKind?: 'thought' | 'system';
-  runDurationMs?: number;
-};
-
-type AcpToolItem = {
-  toolCallId: string;
-  title?: string;
-  kind?: string;
-  status?: string;
-  locations?: Array<{ path: string; line?: number }>;
-  content?: ToolCallContent[];
-  rawInput?: string;
-  terminalPreview?: Array<{ terminalId: string; lines: string[]; truncated: boolean }>;
-};
-
-type AcpPlanItem = {
-  entries: Array<{ content?: string; status?: string; priority?: string }>;
-};
-
-type AcpMetaEnvelope = {
-  acp: {
-    version: 1;
-    type: AcpMetaType;
-    feedId: string;
-    sequence: number;
-    createdAt: string;
-    providerId?: string;
-    sessionId?: string;
-    taskId?: string;
-    item: AcpMessageItem | AcpToolItem | AcpPlanItem;
-  };
-};
-
-type AcpHydratedState = {
-  feedItems: FeedItem[];
-  toolMap: Record<string, ToolCall>;
-  terminalMap: Record<string, string>;
-  latestPlan: AcpPlanItem | null;
-  savedMessageIds: Set<string>;
-  savedToolIds: Set<string>;
-  metaMap: Record<string, { sequence: number; createdAt: string }>;
-  nextSequence: number;
-};
-
-type PermissionRequest = {
-  requestId: number;
-  toolCall?: ToolCall;
-  options?: Array<{ id: string; label: string; kind?: string }>;
-};
 
 type Attachment = {
   id: string;
@@ -188,18 +85,10 @@ type Props = {
   provider: Provider;
   isProviderInstalled: boolean | null;
   runInstallCommand: (cmd: string) => void;
+  planModeEnabled: boolean;
+  setPlanModeEnabled: (next: boolean | ((prev: boolean) => boolean)) => void;
 };
 
-const DIFF_CONTEXT_LINES = 3;
-const MAX_DIFF_PREVIEW_LINES = 80;
-const MAX_DIFF_SOURCE_LINES = 400;
-const DEFAULT_TRUNCATE_LIMIT = 120;
-const MAX_PERSISTED_BLOCKS = 40;
-const MAX_PERSISTED_TEXT_CHARS = 4000;
-const MAX_PERSISTED_RESOURCE_CHARS = 1200;
-const MAX_PERSISTED_MESSAGE_CHARS = 12000;
-const MAX_PERSISTED_TOOL_INPUT_CHARS = 4000;
-const MAX_PERSISTED_TERMINAL_LINES = 120;
 const SESSION_ERROR_PREVIEW_LIMIT = 360;
 const SESSION_ERROR_PREVIEW_LINES = 4;
 /** Unique ID for tracking copy button state in the session error banner */
@@ -207,14 +96,6 @@ const SESSION_ERROR_COPY_ID = 'acp-session-error';
 const SCROLL_BOTTOM_THRESHOLD = 80;
 
 const normalizeNewlines = (text: string) => text.replace(/\r\n/g, '\n');
-
-const splitLines = (text: string) => normalizeNewlines(text).split('\n');
-
-const truncateText = (text: string, limit: number = DEFAULT_TRUNCATE_LIMIT) => {
-  if (text.length <= limit) return text;
-  const clipped = Math.max(0, limit - 3);
-  return `${text.slice(0, clipped)}...`;
-};
 
 const pluralize = (value: number, noun: string) =>
   value === 1 ? `${value} ${noun}` : `${value} ${noun}s`;
@@ -266,224 +147,6 @@ const LoadingTimer: React.FC<{ label: string }> = ({ label }) => (
   </div>
 );
 
-const commonPrefixLength = (a: string[], b: string[]) => {
-  const max = Math.min(a.length, b.length);
-  let idx = 0;
-  while (idx < max && a[idx] === b[idx]) idx += 1;
-  return idx;
-};
-
-const commonSuffixLength = (a: string[], b: string[], prefix: number) => {
-  let idx = 0;
-  const max = Math.min(a.length, b.length) - prefix;
-  while (idx < max && a[a.length - 1 - idx] === b[b.length - 1 - idx]) idx += 1;
-  return idx;
-};
-
-const estimateLineChanges = (oldLines: string[], newLines: string[]) => {
-  const prefix = commonPrefixLength(oldLines, newLines);
-  const suffix = commonSuffixLength(oldLines, newLines, prefix);
-  const deletions = Math.max(0, oldLines.length - prefix - suffix);
-  const additions = Math.max(0, newLines.length - prefix - suffix);
-  return { additions, deletions };
-};
-
-const myersDiff = (a: string[], b: string[]): DiffPreviewLine[] => {
-  const n = a.length;
-  const m = b.length;
-  const max = n + m;
-  const offset = max;
-  const v = new Array(2 * max + 1).fill(0);
-  const trace: number[][] = [];
-
-  for (let d = 0; d <= max; d += 1) {
-    trace.push(v.slice());
-    for (let k = -d; k <= d; k += 2) {
-      let x: number;
-      if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
-        x = v[offset + k + 1];
-      } else {
-        x = v[offset + k - 1] + 1;
-      }
-      let y = x - k;
-      while (x < n && y < m && a[x] === b[y]) {
-        x += 1;
-        y += 1;
-      }
-      v[offset + k] = x;
-      if (x >= n && y >= m) {
-        return buildMyersResult(trace, a, b);
-      }
-    }
-  }
-  return buildMyersResult(trace, a, b);
-};
-
-const buildMyersResult = (trace: number[][], a: string[], b: string[]): DiffPreviewLine[] => {
-  const n = a.length;
-  const m = b.length;
-  const max = n + m;
-  const offset = max;
-  const result: DiffPreviewLine[] = [];
-  let x = n;
-  let y = m;
-
-  for (let d = trace.length - 1; d >= 0; d -= 1) {
-    const v = trace[d];
-    const k = x - y;
-    let prevK: number;
-    if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
-      prevK = k + 1;
-    } else {
-      prevK = k - 1;
-    }
-    const prevX = v[offset + prevK];
-    const prevY = prevX - prevK;
-
-    while (x > prevX && y > prevY) {
-      result.push({ type: 'context', text: a[x - 1] ?? '' });
-      x -= 1;
-      y -= 1;
-    }
-    if (d === 0) break;
-    if (x === prevX) {
-      result.push({ type: 'add', text: b[prevY] ?? '' });
-    } else {
-      result.push({ type: 'del', text: a[prevX] ?? '' });
-    }
-    x = prevX;
-    y = prevY;
-  }
-
-  return result.reverse();
-};
-
-const buildFallbackDiffLines = (
-  oldLines: string[],
-  newLines: string[],
-  context: number
-): DiffPreviewLine[] => {
-  const prefix = commonPrefixLength(oldLines, newLines);
-  const suffix = commonSuffixLength(oldLines, newLines, prefix);
-  const beforeStart = Math.max(0, prefix - context);
-  const before = oldLines.slice(beforeStart, prefix);
-  const afterStart = Math.max(prefix, oldLines.length - suffix);
-  const afterEnd = Math.min(oldLines.length, afterStart + context);
-  const after = oldLines.slice(afterStart, afterEnd);
-  const removed = oldLines.slice(prefix, oldLines.length - suffix);
-  const added = newLines.slice(prefix, newLines.length - suffix);
-
-  return [
-    ...before.map((text) => ({ type: 'context' as const, text })),
-    ...removed.map((text) => ({ type: 'del' as const, text })),
-    ...added.map((text) => ({ type: 'add' as const, text })),
-    ...after.map((text) => ({ type: 'context' as const, text })),
-  ];
-};
-
-const trimDiffLines = (
-  lines: DiffPreviewLine[],
-  maxLines: number,
-  context: number
-): { lines: DiffPreviewLine[]; truncated: boolean } => {
-  if (lines.length <= maxLines) {
-    return { lines, truncated: false };
-  }
-  const changeIndexes = lines
-    .map((line, idx) => (line.type === 'context' ? -1 : idx))
-    .filter((idx) => idx >= 0);
-  if (changeIndexes.length === 0) {
-    return { lines: lines.slice(0, maxLines), truncated: true };
-  }
-  const ranges: Array<{ start: number; end: number }> = [];
-  for (const idx of changeIndexes) {
-    const start = Math.max(0, idx - context);
-    const end = Math.min(lines.length - 1, idx + context);
-    const last = ranges[ranges.length - 1];
-    if (last && start <= last.end + 1) {
-      last.end = Math.max(last.end, end);
-    } else {
-      ranges.push({ start, end });
-    }
-  }
-
-  const total = ranges.reduce((sum, r) => sum + (r.end - r.start + 1), 0);
-  const output: DiffPreviewLine[] = [];
-
-  if (total <= maxLines) {
-    ranges.forEach((range, idx) => {
-      if (idx > 0) output.push({ type: 'context', text: '...' });
-      output.push(...lines.slice(range.start, range.end + 1));
-    });
-    return { lines: output, truncated: total < lines.length };
-  }
-
-  const first = ranges[0];
-  const last = ranges[ranges.length - 1];
-  if (first.start === last.start && first.end === last.end) {
-    return { lines: lines.slice(first.start, first.end + 1), truncated: true };
-  }
-  const half = Math.max(4, Math.floor((maxLines - 1) / 2));
-  let firstSlice = lines.slice(first.start, first.end + 1);
-  let lastSlice = lines.slice(last.start, last.end + 1);
-  if (firstSlice.length > half) firstSlice = firstSlice.slice(0, half);
-  if (lastSlice.length > half) lastSlice = lastSlice.slice(lastSlice.length - half);
-  return {
-    lines: [...firstSlice, { type: 'context', text: '...' }, ...lastSlice],
-    truncated: true,
-  };
-};
-
-const buildDiffPreview = (oldText: string, newText: string): DiffPreview => {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  const useFallback = oldLines.length + newLines.length > MAX_DIFF_SOURCE_LINES * 2;
-  const diffLines = useFallback
-    ? buildFallbackDiffLines(oldLines, newLines, DIFF_CONTEXT_LINES)
-    : myersDiff(oldLines, newLines);
-  const { additions, deletions } = useFallback
-    ? estimateLineChanges(oldLines, newLines)
-    : diffLines.reduce(
-        (acc, line) => {
-          if (line.type === 'add') acc.additions += 1;
-          if (line.type === 'del') acc.deletions += 1;
-          return acc;
-        },
-        { additions: 0, deletions: 0 }
-      );
-  const trimmed = trimDiffLines(diffLines, MAX_DIFF_PREVIEW_LINES, DIFF_CONTEXT_LINES);
-  return {
-    lines: trimmed.lines,
-    additions,
-    deletions,
-    truncated: trimmed.truncated,
-  };
-};
-
-const getTailLines = (text: string, maxLines: number) => {
-  const lines = splitLines(text);
-  if (lines.length <= maxLines) {
-    return { lines, truncated: false };
-  }
-  return { lines: lines.slice(lines.length - maxLines), truncated: true };
-};
-
-// Truncate text to last N lines to prevent unbounded state growth.
-// Uses a buffer (maxLines + 10) to avoid truncating on every chunk.
-const truncateToTailLines = (text: string, maxLines: number): string => {
-  const lines = splitLines(text);
-  if (lines.length <= maxLines) {
-    return text;
-  }
-  // Add a small buffer to avoid truncating on every chunk
-  const buffer = 10;
-  const limit = maxLines + buffer;
-  if (lines.length <= limit) {
-    return text;
-  }
-  return lines.slice(lines.length - maxLines).join('\n');
-};
-
 const statusStyles: Record<string, string> = {
   pending: 'text-amber-700 bg-amber-50 border-amber-200',
   in_progress: 'text-blue-700 bg-blue-50 border-blue-200',
@@ -504,6 +167,14 @@ type ModelOption = {
   label: string;
   description?: string;
 };
+
+// Static Codex models for instant loading (no waiting for IPC)
+const CODEX_MODELS: ModelOption[] = [
+  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+  { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
+  { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
+  { id: 'gpt-5.2', label: 'GPT-5.2' },
+];
 
 type ModelVariant = ModelOption & {
   baseId: string;
@@ -822,6 +493,8 @@ const AcpChatInterface: React.FC<Props> = ({
   provider,
   isProviderInstalled,
   runInstallCommand,
+  planModeEnabled,
+  setPlanModeEnabled,
 }) => {
   const uiLog = useCallback((...args: any[]) => {
     // eslint-disable-next-line no-console
@@ -831,38 +504,33 @@ const AcpChatInterface: React.FC<Props> = ({
     () => `acp:plan-banner-dismissed:conv-${task.id}-acp`,
     [task.id]
   );
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
-  const [sessionStarting, setSessionStarting] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [toolCalls, setToolCalls] = useState<Record<string, ToolCall>>({});
-  const [permissions, setPermissions] = useState<Record<number, PermissionRequest>>({});
-  const [terminalOutputs, setTerminalOutputs] = useState<Record<string, string>>({});
+  const { state: sessionState, actions: sessionActions } = useAcpSession(task.id, provider);
+  const {
+    sessionId,
+    sessionError,
+    sessionStarting,
+    isRunning,
+    feed,
+    toolCalls,
+    permissions,
+    terminalOutputs,
+    plan,
+    promptCaps,
+    configOptions,
+    models,
+    currentModelId,
+    historyReady,
+    historyHasMessages,
+    runStartedAt,
+    runElapsedMs: storedRunElapsedMs,
+  } = sessionState;
   const [commands, setCommands] = useState<
     Array<{ name: string; description?: string; hint?: string }>
   >([]);
-
-  const [plan, setPlan] = useState<Array<{
-    content?: string;
-    status?: string;
-    priority?: string;
-  }> | null>(null);
   const [input, setInput] = useState('');
   const [showPlan, setShowPlan] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-  const [agentId, setAgentId] = useState<string>(String(provider || 'codex'));
-  const [promptCaps, setPromptCaps] = useState<{
-    image?: boolean;
-    audio?: boolean;
-    embeddedContext?: boolean;
-  }>({});
   const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
-  const [sessionRestartToken, setSessionRestartToken] = useState(0);
-  const { enabled: planModeEnabled, setEnabled: setPlanModeEnabled } = usePlanMode(
-    task.id,
-    task.path
-  );
   const [planModePromptSent, setPlanModePromptSent] = useState(false);
   const [lastUserPlanModeSent, setLastUserPlanModeSent] = useState(false);
   const [planBannerDismissed, setPlanBannerDismissed] = useState(() => {
@@ -871,28 +539,18 @@ const AcpChatInterface: React.FC<Props> = ({
   });
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
-  const [configOptions, setConfigOptions] = useState<AcpConfigOption[]>([]);
-  const [models, setModels] = useState<AcpModel[]>([]);
-  const [currentModelId, setCurrentModelId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const [historyReady, setHistoryReady] = useState(false);
-  const runStartedAtRef = useRef<number | null>(null);
-  const lastAssistantMessageIdRef = useRef<string | null>(null);
   const copyResetRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const hydratingRef = useRef(false);
-  const sequenceRef = useRef(0);
-  const feedMetaRef = useRef<Record<string, { sequence: number; createdAt: string }>>({});
-  const savedMessageIdsRef = useRef<Set<string>>(new Set());
-  const savedToolCallIdsRef = useRef<Set<string>>(new Set());
-  const lastSavedPlanHashRef = useRef<string | null>(null);
   const persistedModelRef = useRef<string | null>(null);
   const persistedThinkingBudgetRef = useRef<ThinkingBudgetLevel | null>(null);
+  const didRestorePreferencesRef = useRef<string | null>(null);
+  const hasMessagesRef = useRef(false);
   const isPinnedToBottomRef = useRef(true);
   const lastFeedLengthRef = useRef(0);
   const forceScrollRef = useRef(false);
@@ -905,6 +563,15 @@ const AcpChatInterface: React.FC<Props> = ({
     () => `acp:thinking:${acpConversationId}`,
     [acpConversationId]
   );
+
+  useEffect(() => {
+    setExpandedItems({});
+    setUnseenCount(0);
+    setIsPinnedToBottom(true);
+    lastFeedLengthRef.current = 0;
+    isPinnedToBottomRef.current = true;
+    forceScrollRef.current = false;
+  }, [task.id, provider]);
 
   // Track cursor position for mention detection
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -1049,36 +716,6 @@ const AcpChatInterface: React.FC<Props> = ({
     setExpandedItems((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const handleConfigAndModelUpdates = useCallback((payload: any) => {
-    if (!payload) return;
-    if (Array.isArray(payload.configOptions)) {
-      setConfigOptions(payload.configOptions);
-    } else if (Array.isArray(payload.config_options)) {
-      setConfigOptions(payload.config_options);
-    }
-    const nextModels = extractModelsFromPayload(payload);
-    if (nextModels.length) {
-      setModels(nextModels);
-    }
-    const nextCurrentModelId = extractCurrentModelId(payload);
-    if (nextCurrentModelId) {
-      setCurrentModelId(nextCurrentModelId);
-    }
-  }, []);
-
-  const ensureFeedMeta = useCallback(
-    (id: string, overrides?: { sequence?: number; createdAt?: string }) => {
-      const existing = feedMetaRef.current[id];
-      if (existing) return existing;
-      const createdAt = overrides?.createdAt ?? new Date().toISOString();
-      const sequence = overrides?.sequence ?? sequenceRef.current++;
-      const next = { sequence, createdAt };
-      feedMetaRef.current[id] = next;
-      return next;
-    },
-    []
-  );
-
   const safeJsonParse = useCallback((value?: string) => {
     if (!value) return null;
     const trimmed = value.trim();
@@ -1089,380 +726,6 @@ const AcpChatInterface: React.FC<Props> = ({
       return null;
     }
   }, []);
-
-  const sanitizeBlocks = useCallback((blocks: ContentBlock[]) => {
-    const sanitized: ContentBlock[] = [];
-    for (const block of blocks) {
-      if (block.type === 'text') {
-        const text = block.text ? truncateText(String(block.text), MAX_PERSISTED_TEXT_CHARS) : '';
-        if (text) sanitized.push({ type: 'text', text });
-        continue;
-      }
-      if (block.type === 'resource' || block.type === 'resource_link') {
-        const resource = block.resource || {};
-        const uri = (resource.uri as string | undefined) || block.uri;
-        const name = resource.name || block.name;
-        const title = resource.title || block.title;
-        const description = resource.description || block.description;
-        const mimeType = resource.mimeType || block.mimeType;
-        const size = resource.size || block.size;
-        if (block.type === 'resource') {
-          const textValue = resource.text || block.text;
-          const text = textValue
-            ? truncateText(String(textValue), MAX_PERSISTED_RESOURCE_CHARS)
-            : undefined;
-          sanitized.push({
-            type: 'resource',
-            uri,
-            name,
-            title,
-            description,
-            mimeType,
-            size,
-            resource: {
-              uri,
-              name,
-              title,
-              description,
-              mimeType,
-              size,
-              text,
-            },
-          });
-        } else {
-          sanitized.push({
-            type: 'resource_link',
-            uri,
-            name,
-            title,
-            mimeType,
-            size,
-          });
-        }
-        continue;
-      }
-      if (block.type === 'image') {
-        sanitized.push({
-          type: 'text',
-          text: '[image omitted]',
-        });
-      }
-      if (block.type === 'audio') {
-        sanitized.push({
-          type: 'text',
-          text: '[audio omitted]',
-        });
-      }
-    }
-    return sanitized.slice(0, MAX_PERSISTED_BLOCKS);
-  }, []);
-
-  const sanitizeRawInput = useCallback(
-    (rawInput?: string) => {
-      if (!rawInput) return undefined;
-      const parsed = safeJsonParse(rawInput);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const allowedKeys = [
-          'command',
-          'args',
-          'path',
-          'filePath',
-          'filepath',
-          'query',
-          'search',
-          'input',
-          'prompt',
-        ];
-        const subset: Record<string, any> = {};
-        for (const key of allowedKeys) {
-          if (parsed[key] !== undefined) subset[key] = parsed[key];
-        }
-        const serialized = JSON.stringify(subset, null, 2);
-        return truncateText(serialized, MAX_PERSISTED_TOOL_INPUT_CHARS);
-      }
-      return truncateText(rawInput, MAX_PERSISTED_TOOL_INPUT_CHARS);
-    },
-    [safeJsonParse]
-  );
-
-  const buildPersistedContent = useCallback((blocks: ContentBlock[]) => {
-    const parts: string[] = [];
-    blocks.forEach((block) => {
-      if (block.type === 'text' && block.text) {
-        parts.push(block.text);
-        return;
-      }
-      if (block.type === 'resource' && block.resource?.text) {
-        parts.push(block.resource.text);
-      }
-    });
-    const text = parts.join('\n\n').trim();
-    if (text) return truncateText(text, MAX_PERSISTED_MESSAGE_CHARS);
-    const resourceLabel = blocks.find(
-      (block) => block.type === 'resource' || block.type === 'resource_link'
-    );
-    if (!resourceLabel) return '';
-    const label =
-      resourceLabel.title ||
-      resourceLabel.name ||
-      resourceLabel.resource?.title ||
-      resourceLabel.resource?.name ||
-      resourceLabel.uri ||
-      resourceLabel.resource?.uri ||
-      'resource';
-    return truncateText(`[attachment] ${label}`, MAX_PERSISTED_MESSAGE_CHARS);
-  }, []);
-
-  const buildToolCallSnapshot = useCallback(
-    (toolCall: ToolCall): AcpToolItem => {
-      const content: ToolCallContent[] = [];
-      const diffItems = (toolCall.content?.filter((item) => item.type === 'diff') || []) as Array<{
-        type: 'diff';
-        path?: string;
-        oldText?: string;
-        newText?: string;
-        original?: string;
-        updated?: string;
-        preview?: DiffPreview;
-      }>;
-      diffItems.forEach((item) => {
-        if (item.preview) {
-          content.push({
-            type: 'diff',
-            path: item.path,
-            preview: item.preview,
-          });
-          return;
-        }
-        const before = (item as any).oldText ?? (item as any).original ?? '';
-        const after = (item as any).newText ?? (item as any).updated ?? '';
-        const preview = buildDiffPreview(String(before ?? ''), String(after ?? ''));
-        content.push({
-          type: 'diff',
-          path: item.path,
-          preview,
-        });
-      });
-
-      const contentBlocks =
-        (toolCall.content?.filter((item) => item.type === 'content') as
-          | Array<{ type: 'content'; content: ContentBlock }>
-          | undefined) || [];
-      const sanitizedBlocks = sanitizeBlocks(contentBlocks.map((item) => item.content)).slice(
-        0,
-        MAX_PERSISTED_BLOCKS
-      );
-      sanitizedBlocks.forEach((block) => {
-        content.push({ type: 'content', content: block });
-      });
-
-      const terminalItems =
-        (toolCall.content?.filter((item) => item.type === 'terminal') as
-          | Array<{ type: 'terminal'; terminalId: string }>
-          | undefined) || [];
-      const terminalPreview: Array<{ terminalId: string; lines: string[]; truncated: boolean }> =
-        [];
-      const seenTerminalIds = new Set<string>();
-      terminalItems.forEach((item) => {
-        if (!item.terminalId || seenTerminalIds.has(item.terminalId)) return;
-        seenTerminalIds.add(item.terminalId);
-        content.push({ type: 'terminal', terminalId: item.terminalId });
-        const output = terminalOutputs[item.terminalId] || '';
-        const tail = getTailLines(output, MAX_PERSISTED_TERMINAL_LINES);
-        terminalPreview.push({
-          terminalId: item.terminalId,
-          lines: tail.lines,
-          truncated: tail.truncated,
-        });
-      });
-
-      return {
-        toolCallId: toolCall.toolCallId,
-        title: toolCall.title,
-        kind: toolCall.kind,
-        status: toolCall.status,
-        locations: toolCall.locations?.map((loc) => ({
-          path: loc.path,
-          line: loc.line,
-        })),
-        content,
-        rawInput: sanitizeRawInput(toolCall.rawInput),
-        terminalPreview: terminalPreview.length ? terminalPreview : undefined,
-      };
-    },
-    [sanitizeBlocks, sanitizeRawInput, terminalOutputs]
-  );
-
-  const persistAcpMessage = useCallback(
-    async (args: {
-      messageId: string;
-      feedId: string;
-      type: AcpMetaType;
-      item: AcpMessageItem | AcpToolItem | AcpPlanItem;
-      sender: 'user' | 'agent';
-      content: string;
-    }) => {
-      if (!window.electronAPI?.saveMessage) return;
-      const meta = ensureFeedMeta(args.feedId);
-      const payload: AcpMetaEnvelope = {
-        acp: {
-          version: 1,
-          type: args.type,
-          feedId: args.feedId,
-          sequence: meta.sequence,
-          createdAt: meta.createdAt,
-          providerId: String(provider || 'codex'),
-          sessionId: sessionId ?? undefined,
-          taskId: task.id,
-          item: args.item,
-        },
-      };
-      try {
-        const res = await window.electronAPI.saveMessage({
-          id: args.messageId,
-          conversationId: acpConversationId,
-          content: args.content || '',
-          sender: args.sender,
-          metadata: payload,
-        });
-        if (!res?.success) {
-          uiLog('persistMessage:failed', res?.error);
-        }
-      } catch (error) {
-        uiLog('persistMessage:error', error);
-      }
-    },
-    [acpConversationId, ensureFeedMeta, provider, sessionId, task.id, uiLog]
-  );
-
-  const hydrateAcpHistory = useCallback((rows: any[]): AcpHydratedState => {
-    const feedItems: FeedItem[] = [];
-    const toolMap: Record<string, ToolCall> = {};
-    const terminalMap: Record<string, string> = {};
-    let latestPlan: AcpPlanItem | null = null;
-    const savedMessageIds = new Set<string>();
-    const savedToolIds = new Set<string>();
-    const metaMap: Record<string, { sequence: number; createdAt: string }> = {};
-
-    const parsed = rows
-      .map((row) => {
-        if (!row?.metadata) return null;
-        try {
-          const metadata =
-            typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-          const acp = metadata?.acp;
-          if (!acp || acp.version !== 1) return null;
-          return { row, acp };
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean) as Array<{ row: any; acp: AcpMetaEnvelope['acp'] }>;
-
-    parsed.sort((a, b) => {
-      const aSeq = Number.isFinite(a.acp.sequence) ? a.acp.sequence : null;
-      const bSeq = Number.isFinite(b.acp.sequence) ? b.acp.sequence : null;
-      if (aSeq !== null && bSeq !== null && aSeq !== bSeq) return aSeq - bSeq;
-      const aTime = Date.parse(a.row.timestamp || a.acp.createdAt || '') || 0;
-      const bTime = Date.parse(b.row.timestamp || b.acp.createdAt || '') || 0;
-      return aTime - bTime;
-    });
-
-    let nextSequence = 0;
-    parsed.forEach(({ row, acp }) => {
-      const feedId = acp.feedId || row.id;
-      const createdAt = acp.createdAt || row.timestamp || new Date().toISOString();
-      const sequence = Number.isFinite(acp.sequence) ? acp.sequence : nextSequence;
-      nextSequence = Math.max(nextSequence, sequence + 1);
-      metaMap[feedId] = { sequence, createdAt };
-
-      if (acp.type === 'message') {
-        const item = acp.item as AcpMessageItem;
-        const blocks =
-          Array.isArray(item?.blocks) && item.blocks.length
-            ? item.blocks
-            : row.content
-              ? [{ type: 'text', text: String(row.content) }]
-              : [];
-        if (!blocks.length) return;
-        const role = item?.role || (row.sender === 'user' ? 'user' : 'assistant');
-        feedItems.push({
-          id: feedId,
-          type: 'message',
-          role,
-          blocks,
-          streaming: false,
-          messageKind: item?.messageKind,
-          runDurationMs: item?.runDurationMs,
-        });
-        savedMessageIds.add(feedId);
-        return;
-      }
-      if (acp.type === 'tool') {
-        const item = acp.item as AcpToolItem;
-        if (!item?.toolCallId) return;
-        toolMap[item.toolCallId] = {
-          toolCallId: item.toolCallId,
-          title: item.title,
-          kind: item.kind,
-          status: item.status,
-          locations: item.locations,
-          content: item.content,
-          rawInput: item.rawInput,
-        };
-        if (item.terminalPreview?.length) {
-          item.terminalPreview.forEach((preview) => {
-            terminalMap[preview.terminalId] = preview.lines.join('\n');
-          });
-        }
-        if (
-          !feedItems.some((entry) => entry.type === 'tool' && entry.toolCallId === item.toolCallId)
-        ) {
-          feedItems.push({ id: feedId, type: 'tool', toolCallId: item.toolCallId });
-        }
-        savedToolIds.add(item.toolCallId);
-        return;
-      }
-      if (acp.type === 'plan') {
-        const item = acp.item as AcpPlanItem;
-        if (item?.entries?.length) {
-          latestPlan = item;
-        }
-      }
-    });
-
-    return {
-      feedItems,
-      toolMap,
-      terminalMap,
-      latestPlan,
-      savedMessageIds,
-      savedToolIds,
-      metaMap,
-      nextSequence,
-    };
-  }, []);
-
-  const maybePersistPlan = useCallback(
-    (entries: Array<{ content?: string; status?: string; priority?: string }>) => {
-      if (hydratingRef.current) return;
-      if (!entries?.length) return;
-      const hash = JSON.stringify(entries);
-      if (lastSavedPlanHashRef.current === hash) return;
-      lastSavedPlanHashRef.current = hash;
-      const feedId = `plan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      ensureFeedMeta(feedId);
-      void persistAcpMessage({
-        messageId: `acp-${feedId}`,
-        feedId,
-        type: 'plan',
-        item: { entries },
-        sender: 'agent',
-        content: 'Plan updated',
-      });
-    },
-    [ensureFeedMeta, persistAcpMessage]
-  );
 
   // Auto-resize textarea based on content
   useEffect(() => {
@@ -1511,21 +774,24 @@ const AcpChatInterface: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
-    if (!isRunning) return;
-    if (runStartedAtRef.current === null) {
-      runStartedAtRef.current = Date.now();
+    if (!isRunning || runStartedAt === null) {
+      setRunElapsedMs(storedRunElapsedMs || 0);
+      return;
     }
-    setRunElapsedMs(Date.now() - runStartedAtRef.current);
-    const interval = window.setInterval(() => {
-      if (runStartedAtRef.current === null) return;
-      setRunElapsedMs(Date.now() - runStartedAtRef.current);
-    }, 250);
+    const tick = () => setRunElapsedMs(Date.now() - runStartedAt);
+    tick();
+    const interval = window.setInterval(tick, 250);
     return () => window.clearInterval(interval);
-  }, [isRunning]);
+  }, [isRunning, runStartedAt, storedRunElapsedMs]);
 
   useEffect(() => {
-    setAgentId(String(provider || 'codex'));
-  }, [provider]);
+    void sessionActions.ensureHistory();
+  }, [sessionActions]);
+
+  useEffect(() => {
+    if (!historyReady) return;
+    void sessionActions.ensureSession(task.path);
+  }, [historyReady, sessionActions, task.path]);
 
   useEffect(() => {
     if (!planModeEnabled) {
@@ -1542,110 +808,23 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [sessionId]);
 
   useEffect(() => {
-    let cancelled = false;
-    hydratingRef.current = true;
-    setHistoryReady(false);
-    setFeed([]);
-    setToolCalls({});
-    setPermissions({});
-    setTerminalOutputs({});
-    setPlan(null);
-    setExpandedItems({});
-    savedMessageIdsRef.current = new Set();
-    savedToolCallIdsRef.current = new Set();
-    feedMetaRef.current = {};
-    sequenceRef.current = 0;
-    lastSavedPlanHashRef.current = null;
-    (async () => {
-      try {
-        await window.electronAPI?.saveConversation?.({
-          id: acpConversationId,
-          taskId: task.id,
-          title: 'ACP Chat',
-        });
-        const res = await window.electronAPI?.getMessages?.(acpConversationId);
-        if (cancelled) return;
-        if (res?.success && Array.isArray(res.messages) && res.messages.length) {
-          const hydrated = hydrateAcpHistory(res.messages);
-          feedMetaRef.current = hydrated.metaMap;
-          sequenceRef.current = hydrated.nextSequence;
-          savedMessageIdsRef.current = hydrated.savedMessageIds;
-          savedToolCallIdsRef.current = hydrated.savedToolIds;
-          setFeed(hydrated.feedItems);
-          setToolCalls(hydrated.toolMap);
-          setTerminalOutputs(hydrated.terminalMap);
-          if (hydrated.latestPlan?.entries?.length) {
-            setPlan(hydrated.latestPlan.entries);
-            lastSavedPlanHashRef.current = JSON.stringify(hydrated.latestPlan.entries);
-          }
-          const hasHistoryMessages = hydrated.feedItems.some((item) => item.type === 'message');
-          if (hasHistoryMessages) {
-            const storedModel = readLocalStorage(modelStorageKey);
-            if (storedModel) {
-              setModelId(storedModel);
-            }
-            const storedBudget = readLocalStorage(thinkingStorageKey);
-            if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
-              setThinkingBudget(storedBudget);
-            }
-          }
-        }
-      } catch (error) {
-        uiLog('hydrateHistory:error', error);
-      } finally {
-        if (!cancelled) {
-          hydratingRef.current = false;
-          setHistoryReady(true);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [acpConversationId, hydrateAcpHistory, task.id, uiLog, modelStorageKey, thinkingStorageKey]);
+    hasMessagesRef.current =
+      historyHasMessages || feed.some((item) => item.type === 'message');
+  }, [historyHasMessages, feed]);
 
   useEffect(() => {
-    if (!historyReady) return;
-    let cancelled = false;
-    (async () => {
-      setSessionStarting(true);
-      setSessionError(null);
-      setConfigOptions([]);
-      setModels([]);
-      setCurrentModelId(null);
-      uiLog('startSession', { taskId: task.id, provider, cwd: task.path });
-      const res = await window.electronAPI.acpStartSession({
-        taskId: task.id,
-        providerId: provider,
-        cwd: task.path,
-      });
-      uiLog('startSession:response', res);
-      if (cancelled) return;
-      if (!res?.success || !res.sessionId) {
-        uiLog('startSession:failed', res);
-        setSessionError(res?.error || 'Failed to start ACP session.');
-        if (!cancelled) setSessionStarting(false);
-        return;
-      }
-      if (!cancelled) {
-        setSessionId(res.sessionId);
-        setSessionStarting(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [historyReady, task.id, task.path, provider, uiLog, sessionRestartToken]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    return () => {
-      try {
-        uiLog('disposeSession', { sessionId });
-        window.electronAPI.acpDispose({ sessionId });
-      } catch {}
-    };
-  }, [sessionId, uiLog]);
+    if (!historyReady || !historyHasMessages) return;
+    if (didRestorePreferencesRef.current === acpConversationId) return;
+    didRestorePreferencesRef.current = acpConversationId;
+    const storedModel = readLocalStorage(modelStorageKey);
+    if (storedModel) {
+      setModelId(storedModel);
+    }
+    const storedBudget = readLocalStorage(thinkingStorageKey);
+    if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
+      setThinkingBudget(storedBudget);
+    }
+  }, [historyReady, historyHasMessages, acpConversationId, modelStorageKey, thinkingStorageKey]);
 
   // Scan for custom slash commands when project or provider changes
   useEffect(() => {
@@ -1673,370 +852,6 @@ const AcpChatInterface: React.FC<Props> = ({
     };
     loadCustomCommands();
   }, [task.path, provider, uiLog]);
-
-  const mergeBlocks = (base: ContentBlock[], incoming: ContentBlock[]) => {
-    const next = [...base];
-    for (const block of incoming) {
-      if (block.type === 'text') {
-        const last = next[next.length - 1];
-        if (last && last.type === 'text') {
-          last.text = (last.text || '') + (block.text || '');
-        } else {
-          next.push({ ...block });
-        }
-      } else {
-        next.push({ ...block });
-      }
-    }
-    return next;
-  };
-
-  const normalizeRawValue = (value: any): string | undefined => {
-    if (value === undefined || value === null) return undefined;
-    if (typeof value === 'string') return value;
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return String(value);
-    }
-  };
-
-  const normalizePromptCaps = (caps: any) => ({
-    image: Boolean(caps?.image ?? caps?.images ?? caps?.supportsImage ?? caps?.supportsImages),
-    audio: Boolean(caps?.audio ?? caps?.supportsAudio ?? caps?.supportsAudioInput),
-    embeddedContext: Boolean(
-      caps?.embeddedContext ?? caps?.embedded_context ?? caps?.supportsEmbeddedContext
-    ),
-  });
-
-  const appendMessage = (
-    role: 'user' | 'assistant' | 'system',
-    blocks: ContentBlock[],
-    options?: { streaming?: boolean; messageKind?: 'thought' | 'system' }
-  ) => {
-    if (!blocks.length) return;
-    const streaming = options?.streaming ?? role === 'assistant';
-    const messageKind = options?.messageKind;
-    setFeed((prev) => {
-      const last = prev[prev.length - 1];
-      if (
-        last &&
-        last.type === 'message' &&
-        last.role === role &&
-        last.streaming &&
-        last.messageKind === messageKind
-      ) {
-        const merged = mergeBlocks(last.blocks, blocks);
-        const next = [...prev];
-        next[next.length - 1] = { ...last, blocks: merged };
-        if (role === 'assistant' && messageKind !== 'thought') {
-          lastAssistantMessageIdRef.current = last.id;
-        }
-        return next;
-      }
-      const id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      ensureFeedMeta(id);
-      const newItem = {
-        id,
-        type: 'message' as const,
-        role,
-        blocks,
-        streaming,
-        messageKind,
-      };
-      if (role === 'assistant' && messageKind !== 'thought') {
-        lastAssistantMessageIdRef.current = newItem.id;
-      }
-      return [...prev, newItem];
-    });
-  };
-
-  useEffect(() => {
-    const off = window.electronAPI.onAcpEvent((payload: any) => {
-      if (!payload || payload.taskId !== task.id) return;
-      uiLog('event', payload);
-      if (payload.type === 'session_started') {
-        setSessionError(null);
-        setSessionStarting(false);
-        if (payload.sessionId) {
-          setSessionId(payload.sessionId);
-        }
-        const caps =
-          payload.agentCapabilities?.promptCapabilities ??
-          payload.agentCapabilities?.prompt ??
-          payload.agentCapabilities?.prompt_caps;
-        if (caps) {
-          setPromptCaps(normalizePromptCaps(caps));
-        }
-        handleConfigAndModelUpdates(payload);
-        uiLog('session_started:config', {
-          configOptions: Array.isArray(payload.configOptions)
-            ? payload.configOptions.length
-            : Array.isArray(payload.config_options)
-              ? payload.config_options.length
-              : 0,
-          models: extractModelsFromPayload(payload).length,
-          currentModelId: extractCurrentModelId(payload),
-        });
-        return;
-      }
-      if (payload.type === 'session_error') {
-        uiLog('session_error', payload.error);
-        setSessionError(payload.error || 'ACP session error');
-        setSessionStarting(false);
-        setIsRunning(false);
-        runStartedAtRef.current = null;
-        return;
-      }
-      if (payload.type === 'session_exit') {
-        uiLog('session_exit', payload);
-        setIsRunning(false);
-        runStartedAtRef.current = null;
-        setSessionId(null);
-        setSessionStarting(false);
-        // Use functional update to avoid stale closure - sessionError not in deps
-        setSessionError((prev) => prev ?? 'ACP session ended.');
-        return;
-      }
-      if (payload.type === 'prompt_end') {
-        uiLog('prompt_end', payload);
-        const durationMs =
-          runStartedAtRef.current !== null ? Date.now() - runStartedAtRef.current : runElapsedMs;
-        setIsRunning(false);
-        runStartedAtRef.current = null;
-        setRunElapsedMs(durationMs);
-        setFeed((prev) => {
-          const lastAssistantId = lastAssistantMessageIdRef.current;
-          const next = prev.map((item) => {
-            return item.type === 'message' && item.streaming ? { ...item, streaming: false } : item;
-          });
-          if (lastAssistantId && Number.isFinite(durationMs)) {
-            const targetIndex = next.findIndex(
-              (item) => item.type === 'message' && item.id === lastAssistantId
-            );
-            if (targetIndex >= 0) {
-              const target = next[targetIndex];
-              if (target.type === 'message') {
-                next[targetIndex] = { ...target, runDurationMs: durationMs };
-              }
-            }
-          }
-          return next;
-        });
-        lastAssistantMessageIdRef.current = null;
-        if (payload.stopReason) {
-          const stopReason = String(payload.stopReason).trim();
-          if (stopReason && stopReason !== 'end_turn') {
-            const stopId = `stop-${Date.now()}`;
-            ensureFeedMeta(stopId);
-            setFeed((prev) => [
-              ...prev,
-              {
-                id: stopId,
-                type: 'message',
-                role: 'system',
-                blocks: [
-                  {
-                    type: 'text',
-                    text: `Stopped: ${stopReason}`,
-                  },
-                ],
-              },
-            ]);
-          }
-        }
-        return;
-      }
-      if (payload.type === 'terminal_output') {
-        uiLog('terminal_output', {
-          terminalId: payload.terminalId,
-          chunkSize: String(payload.chunk ?? '').length,
-        });
-        setSessionError(null);
-        const terminalId = payload.terminalId as string;
-        if (!terminalId) return;
-        const chunk = String(payload.chunk ?? '');
-        if (!chunk) return;
-        setTerminalOutputs((prev) => ({
-          ...prev,
-          [terminalId]: truncateToTailLines((prev[terminalId] || '') + chunk, 60),
-        }));
-        return;
-      }
-      if (payload.type === 'session_update') {
-        const update = payload.update;
-        if (!update) return;
-        const updateType =
-          (update.sessionUpdate as string) || (update.type as string) || (update.kind as string);
-        if (!updateType) return;
-        uiLog('session_update', { updateType, update });
-        handleConfigAndModelUpdates(update);
-        if (
-          updateType === 'config_option_update' ||
-          updateType === 'config_options_update' ||
-          updateType === 'model_update'
-        ) {
-          return;
-        }
-        if (
-          updateType === 'agent_message_chunk' ||
-          updateType === 'user_message_chunk' ||
-          updateType === 'agent_message' ||
-          updateType === 'user_message' ||
-          updateType === 'thought_message' ||
-          updateType === 'thought_message_chunk'
-        ) {
-          setSessionError(null);
-          const isThought = updateType.startsWith('thought');
-          const role =
-            updateType === 'agent_message_chunk' || updateType === 'agent_message'
-              ? 'assistant'
-              : isThought
-                ? 'system'
-                : 'user';
-          const blocks = Array.isArray(update.content)
-            ? (update.content as ContentBlock[])
-            : update.content
-              ? [update.content as ContentBlock]
-              : [];
-          appendMessage(role, blocks, {
-            streaming: updateType.endsWith('_chunk'),
-            messageKind: isThought ? 'thought' : role === 'system' ? 'system' : undefined,
-          });
-          return;
-        }
-        if (updateType === 'plan') {
-          setSessionError(null);
-          const entries = Array.isArray(update.entries) ? update.entries : [];
-          setPlan(entries);
-          maybePersistPlan(entries);
-          setFeed((prev) => {
-            const existing = prev.find((item) => item.type === 'plan');
-            if (existing) {
-              return prev.map((item) => (item.type === 'plan' ? { ...item, entries } : item));
-            }
-            return [...prev, { id: `plan-${Date.now()}`, type: 'plan', entries }];
-          });
-          return;
-        }
-        if (updateType === 'tool_call' || updateType === 'tool_call_update') {
-          setSessionError(null);
-          const payloadUpdate = update.toolCall ?? update;
-          const toolCallId = payloadUpdate.toolCallId as string;
-          if (!toolCallId) return;
-          setToolCalls((prev) => {
-            const existing = prev[toolCallId] || { toolCallId };
-            let content = existing.content || [];
-            if (Array.isArray(payloadUpdate.content)) {
-              content = [...content, ...payloadUpdate.content];
-            } else if (payloadUpdate.content) {
-              content = [...content, payloadUpdate.content];
-            }
-            const rawInput = payloadUpdate.rawInput ?? payloadUpdate.input ?? undefined;
-            const rawOutput = payloadUpdate.rawOutput ?? payloadUpdate.output ?? undefined;
-            const next: ToolCall = {
-              ...existing,
-              ...payloadUpdate,
-              toolCallId,
-              content,
-              rawInput: rawInput === undefined ? existing.rawInput : normalizeRawValue(rawInput),
-              rawOutput:
-                rawOutput === undefined ? existing.rawOutput : normalizeRawValue(rawOutput),
-            };
-            return { ...prev, [toolCallId]: next };
-          });
-          setFeed((prev) => {
-            const already = prev.some(
-              (item) => item.type === 'tool' && item.toolCallId === toolCallId
-            );
-            if (already) return prev;
-            const feedId = `tool-${toolCallId}`;
-            ensureFeedMeta(feedId);
-            return [...prev, { id: feedId, type: 'tool', toolCallId }];
-          });
-          return;
-        }
-        // We use our own custom command scanner instead of available_commands_update
-        // This ensures we only show user-created commands from .codex/prompts, etc.
-        if (updateType === 'available_commands_update') {
-          // Ignore agent-provided commands - we use our scanner as the source of truth
-          return;
-        }
-      }
-      if (payload.type === 'permission_request') {
-        const requestId = payload.requestId as number;
-        if (!requestId) return;
-        uiLog('permission_request', payload);
-        const toolCall = payload.params?.toolCall as ToolCall | undefined;
-        const options = Array.isArray(payload.params?.options)
-          ? payload.params.options.map((opt: any) => ({
-              id: String(opt.optionId ?? opt.id ?? ''),
-              label: String(opt.name ?? opt.label ?? opt.title ?? opt.optionId ?? 'Allow'),
-              kind: opt.kind,
-            }))
-          : [];
-        setPermissions((prev) => ({
-          ...prev,
-          [requestId]: { requestId, toolCall, options },
-        }));
-        setFeed((prev) => [...prev, { id: `perm-${requestId}`, type: 'permission', requestId }]);
-      }
-    });
-    return () => {
-      off?.();
-    };
-  }, [task.id, uiLog, handleConfigAndModelUpdates, maybePersistPlan, ensureFeedMeta]);
-
-  useEffect(() => {
-    if (hydratingRef.current) return;
-    if (!feed.length) return;
-    feed.forEach((item) => {
-      if (item.type !== 'message') return;
-      if (item.streaming) return;
-      if (savedMessageIdsRef.current.has(item.id)) return;
-      const blocks = sanitizeBlocks(item.blocks);
-      if (!blocks.length) return;
-      const content = buildPersistedContent(blocks);
-      const messageId = `acp-${item.id}`;
-      void persistAcpMessage({
-        messageId,
-        feedId: item.id,
-        type: 'message',
-        item: {
-          role: item.role,
-          blocks,
-          messageKind: item.messageKind,
-          runDurationMs: item.runDurationMs,
-        },
-        sender: item.role === 'user' ? 'user' : 'agent',
-        content,
-      });
-      savedMessageIdsRef.current.add(item.id);
-    });
-  }, [feed, persistAcpMessage, sanitizeBlocks, buildPersistedContent]);
-
-  useEffect(() => {
-    if (hydratingRef.current) return;
-    const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
-    Object.values(toolCalls).forEach((call) => {
-      if (!call.toolCallId) return;
-      if (!call.status || !terminalStatuses.has(call.status)) return;
-      if (savedToolCallIdsRef.current.has(call.toolCallId)) return;
-      const feedId = `tool-${call.toolCallId}`;
-      ensureFeedMeta(feedId);
-      const snapshot = buildToolCallSnapshot(call);
-      const label = call.title || call.kind || 'Tool call';
-      void persistAcpMessage({
-        messageId: `acp-tool-${call.toolCallId}`,
-        feedId,
-        type: 'tool',
-        item: snapshot,
-        sender: 'agent',
-        content: label,
-      });
-      savedToolCallIdsRef.current.add(call.toolCallId);
-    });
-  }, [toolCalls, terminalOutputs, persistAcpMessage, buildToolCallSnapshot, ensureFeedMeta]);
 
   const normalizePath = (value: string) => value.replace(/\\/g, '/');
 
@@ -2089,23 +904,12 @@ const AcpChatInterface: React.FC<Props> = ({
     setLastUserPlanModeSent(planModeEnabled);
     const includePlanInstruction = planModeEnabled && !planModePromptSent;
     const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, includePlanInstruction);
-    appendMessage('user', promptBlocks.display);
     if (includePlanInstruction) setPlanModePromptSent(true);
     setAttachments([]);
-    lastAssistantMessageIdRef.current = null;
     setRunElapsedMs(0);
-    setIsRunning(true);
-    uiLog('sendPrompt', { sessionId, blocks: promptBlocks.agent, planModeEnabled });
-    const res = await window.electronAPI.acpSendPrompt({
-      sessionId,
-      prompt: promptBlocks.agent,
-    });
-    uiLog('sendPrompt:response', res);
+    const res = await sessionActions.sendPrompt(promptBlocks.display, promptBlocks.agent);
     if (!res?.success) {
-      setSessionError(res?.error || 'Failed to send prompt.');
-      setIsRunning(false);
-      runStartedAtRef.current = null;
-      setRunElapsedMs(0);
+      uiLog('sendPrompt:failed', res);
     }
   };
 
@@ -2122,57 +926,16 @@ const AcpChatInterface: React.FC<Props> = ({
     } catch {}
     setPlanModeEnabled(false);
     const promptBlocks = buildPromptBlocks(approvedText, false, false, []);
-    appendMessage('user', promptBlocks.display);
-    runStartedAtRef.current = Date.now();
-    lastAssistantMessageIdRef.current = null;
     setRunElapsedMs(0);
-    setIsRunning(true);
-    uiLog('sendPrompt', { sessionId, blocks: promptBlocks.agent, planModeEnabled: false });
-    const res = await window.electronAPI.acpSendPrompt({
-      sessionId,
-      prompt: promptBlocks.agent,
-    });
-    uiLog('sendPrompt:response', res);
+    const res = await sessionActions.sendPrompt(promptBlocks.display, promptBlocks.agent);
     if (!res?.success) {
-      setSessionError(res?.error || 'Failed to send prompt.');
-      setIsRunning(false);
-      runStartedAtRef.current = null;
-      setRunElapsedMs(0);
+      uiLog('sendPrompt:failed', res);
     }
   };
 
   const handleCancel = async () => {
     if (!sessionId) return;
-    uiLog('cancelSession', { sessionId });
-    await window.electronAPI.acpCancel({ sessionId });
-    setIsRunning(false);
-    runStartedAtRef.current = null;
-    setToolCalls((prev) => {
-      const next: Record<string, ToolCall> = {};
-      for (const [id, call] of Object.entries(prev)) {
-        if (call.status && ['completed', 'failed', 'cancelled'].includes(call.status)) {
-          next[id] = call;
-        } else {
-          next[id] = { ...call, status: 'cancelled' };
-        }
-      }
-      return next;
-    });
-    const pending = Object.keys(permissions).map((id) => Number(id));
-    if (pending.length) {
-      await Promise.all(
-        pending.map((requestId) =>
-          window.electronAPI.acpRespondPermission({
-            sessionId,
-            requestId,
-            outcome: { outcome: 'cancelled' },
-          })
-        )
-      );
-      uiLog('permission:auto-cancelled', { sessionId, pending });
-      setPermissions({});
-      setFeed((prev) => prev.filter((item) => item.type !== 'permission'));
-    }
+    await sessionActions.cancelSession();
   };
 
   const handlePermissionChoice = async (requestId: number, optionId: string | null) => {
@@ -2180,16 +943,7 @@ const AcpChatInterface: React.FC<Props> = ({
     const outcome = optionId
       ? ({ outcome: 'selected', optionId } as const)
       : ({ outcome: 'cancelled' } as const);
-    uiLog('permission:choice', { sessionId, requestId, outcome });
-    await window.electronAPI.acpRespondPermission({ sessionId, requestId, outcome });
-    setPermissions((prev) => {
-      const next = { ...prev };
-      delete next[requestId];
-      return next;
-    });
-    setFeed((prev) =>
-      prev.filter((item) => !(item.type === 'permission' && item.requestId === requestId))
-    );
+    await sessionActions.respondPermission(requestId, outcome);
   };
 
   const handleAttachClick = () => {
@@ -2371,8 +1125,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   }, [scrollToBottom]);
 
   const handleReconnect = useCallback(() => {
-    setSessionRestartToken((prev) => prev + 1);
-  }, []);
+    void sessionActions.restartSession(task.path);
+  }, [sessionActions, task.path]);
 
   const latestToolCallId = useMemo(() => {
     for (let i = feed.length - 1; i >= 0; i -= 1) {
@@ -2446,11 +1200,13 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   }, [rawModelVariants]);
 
   const modelOptions = useMemo<ModelOption[]>(() => {
-    return Array.from(modelCatalog.values()).map((entry) => ({
+    const dynamicModels = Array.from(modelCatalog.values()).map((entry) => ({
       id: entry.baseId,
       label: entry.label,
       description: entry.description,
     }));
+    // Use dynamic models if available, otherwise fall back to static
+    return dynamicModels.length > 0 ? dynamicModels : CODEX_MODELS;
   }, [modelCatalog]);
 
   const rawSelectedModelId = configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
@@ -2468,7 +1224,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     : undefined;
   const persistedModelValue =
     resolvedModelValue || selectedBaseId || modelId || currentModelId || '';
-  const canSetModel = Boolean(sessionId) && (Boolean(modelConfigId) || modelOptions.length > 0);
+  const canSetModel = Boolean(sessionId);
   const thinkingConfigOption = useMemo(
     () => findThinkingConfigOption(configOptions),
     [configOptions]
@@ -2525,7 +1281,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     (value: string) => {
       setModelId(value);
       writeLocalStorage(modelStorageKey, value);
-      if (!sessionId || !canSetModel) return;
+      if (!canSetModel) return;
 
       const entry = modelCatalog.get(value);
       const availableEfforts = entry?.efforts ?? new Set<string>();
@@ -2539,19 +1295,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       if (modelConfigId) {
         const choice = modelConfigChoices.find((item) => String(item.value) === targetModelId);
         const targetValue = choice?.value ?? targetModelId;
-        setConfigOptions((prev) =>
-          prev.map((option) =>
-            getConfigOptionId(option) === modelConfigId
-              ? { ...option, value: targetValue, currentValue: targetValue }
-              : option
-          )
-        );
-        void window.electronAPI
-          .acpSetConfigOption?.({
-            sessionId,
-            configId: modelConfigId,
-            value: targetValue,
-          })
+        void sessionActions
+          .setConfigOption(modelConfigId, targetValue, { optimistic: true })
           .then((res) => {
             if (!res?.success) {
               uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
@@ -2560,17 +1305,11 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
         return;
       }
 
-      setCurrentModelId(targetModelId);
-      void window.electronAPI
-        .acpSetModel?.({
-          sessionId,
-          modelId: targetModelId,
-        })
-        .then((res) => {
-          if (!res?.success) {
-            uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
-          }
-        });
+      void sessionActions.setModel(targetModelId, { optimistic: true }).then((res) => {
+        if (!res?.success) {
+          uiLog('model:setFailed', { modelId: targetModelId, error: res?.error });
+        }
+      });
     },
     [
       activeBudgetLevel,
@@ -2580,7 +1319,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       modelCatalog,
       modelConfigChoices,
       modelConfigId,
-      sessionId,
+      sessionActions,
       uiLog,
     ]
   );
@@ -2597,7 +1336,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
   useEffect(() => {
     return () => {
-      if (savedMessageIdsRef.current.size === 0) return;
+      if (!hasMessagesRef.current) return;
       const modelValue = persistedModelRef.current;
       if (modelValue) {
         writeLocalStorage(modelStorageKey, modelValue);
@@ -2614,7 +1353,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     setThinkingBudget(next);
     writeLocalStorage(thinkingStorageKey, next);
 
-    if (!canSetThinkingBudget || !sessionId) return;
+    if (!canSetThinkingBudget) return;
     if (thinkingConfigId) {
       const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
       const targetValue = targetChoice?.value ?? next;
@@ -2622,21 +1361,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
         uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
         return;
       }
-      if (targetChoice) {
-        setConfigOptions((prev) =>
-          prev.map((option) =>
-            getConfigOptionId(option) === thinkingConfigId
-              ? { ...option, value: targetChoice.value, currentValue: targetChoice.value }
-              : option
-          )
-        );
-      }
-      void window.electronAPI
-        .acpSetConfigOption?.({
-          sessionId,
-          configId: thinkingConfigId,
-          value: targetValue,
-        })
+      void sessionActions
+        .setConfigOption(thinkingConfigId, targetValue, { optimistic: true })
         .then((res) => {
           if (!res?.success) {
             uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
@@ -2651,29 +1377,19 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
         selectedModelEntry.variants.find((variant) => variant.effort === desiredEffort) ??
         selectedModelEntry.variants[0];
       if (!targetVariant) return;
-      setCurrentModelId(targetVariant.id);
-      void window.electronAPI
-        .acpSetModel?.({
-          sessionId,
-          modelId: targetVariant.id,
-        })
-        .then((res) => {
-          if (!res?.success) {
-            uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
-          }
-        });
+      void sessionActions.setModel(targetVariant.id, { optimistic: true }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
+        }
+      });
       return;
     }
 
     const configId = fallbackThinkingConfigId;
     if (!configId) return;
     const targetValue = next;
-    void window.electronAPI
-      .acpSetConfigOption?.({
-        sessionId,
-        configId,
-        value: targetValue,
-      })
+    void sessionActions
+      .setConfigOption(configId, targetValue, { optimistic: true })
       .then((res) => {
         if (!res?.success) {
           uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
@@ -2684,11 +1400,11 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     canSetThinkingBudget,
     fallbackThinkingConfigId,
     availableBudgetLevels,
-    sessionId,
     thinkingConfigId,
     thinkingConfigMapping.budgetToChoice,
     thinkingStorageKey,
     selectedModelEntry,
+    sessionActions,
     uiLog,
   ]);
 
@@ -3641,7 +2357,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                   <button
                     type="button"
                     aria-label="Dismiss ACP session error"
-                    onClick={() => setSessionError(null)}
+                    onClick={() => sessionActions.clearSessionError()}
                     className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded text-destructive-foreground/80 hover:bg-destructive/20 hover:text-destructive-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-destructive/60"
                   >
                     <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -3761,24 +2477,18 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               ) : null}
               <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3">
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="inline-flex h-8 cursor-default items-center gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm"
-                  >
-                    <OpenAIIcon className="h-3.5 w-3.5" />
-                    <span>Codex</span>
-                  </button>
                   <Select value={resolvedModelValue} onValueChange={handleModelChange}>
                     <SelectTrigger
                       disabled={!canSetModel || modelOptions.length === 0}
-                      className="h-8 w-auto rounded-md border border-border/60 bg-background/90 px-2.5 text-xs text-foreground shadow-sm"
+                      className="h-8 w-auto gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm"
                     >
+                      <OpenAIIcon className="h-3.5 w-3.5 shrink-0" />
                       <SelectValue
                         placeholder={modelOptions.length ? 'Model' : 'Model (not supported)'}
                       />
                     </SelectTrigger>
                     <SelectContent>
-                      {modelOptions.length ? (
+                      {modelOptions.length > 0 ? (
                         modelOptions.map((option) => (
                           <SelectItem key={option.id} value={option.id}>
                             {option.label}
