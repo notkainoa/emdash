@@ -1020,7 +1020,7 @@ const AppContent: React.FC = () => {
     const needsGlmKey = providerRuns.some((pr) => pr.provider === 'claude-glm');
     if (needsGlmKey) {
       try {
-        const api: any = (window as any).electronAPI;
+        const api = window.electronAPI;
         if (!api?.claudeGlmCheck) {
           toast({
             title: 'Claude Code (GLM) unavailable',
