@@ -27,5 +27,3 @@ export function registerClaudeGlmIpc() {
     return claudeGlmService.checkConnection();
   });
 }
-
-export default registerClaudeGlmIpc;
