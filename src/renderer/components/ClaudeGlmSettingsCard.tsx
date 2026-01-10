@@ -54,7 +54,7 @@ const ClaudeGlmSettingsCard: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await window.electronAPI.claudeGlmClearKey();
+      const result = await window.electronAPI.claudeGlmClearKey?.();
       if (result?.success) {
         setConnected(false);
         setInput('');
