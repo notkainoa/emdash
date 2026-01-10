@@ -136,7 +136,7 @@ export class WorktreeService {
       if (providerId === 'claude-glm') {
         const apiKey = await claudeGlmService.getApiKey();
         if (apiKey) {
-          this.ensureClaudeGlmSettings(worktreePath, apiKey);
+          await this.ensureClaudeGlmSettings(worktreePath, apiKey);
         } else {
           log.warn('Claude Code (GLM) API key missing; skipping .claude/settings.local.json', {
             worktreePath,
@@ -834,7 +834,7 @@ export class WorktreeService {
           });
           continue;
         }
-        this.ensureClaudeGlmSettings(worktreePath, clean);
+        await this.ensureClaudeGlmSettings(worktreePath, clean);
       }
     } catch (error) {
       log.error('Failed to apply Claude Code (GLM) settings to existing worktrees', error);
@@ -852,7 +852,7 @@ export class WorktreeService {
           });
           continue;
         }
-        this.ensureClaudeGlmSettings(worktreePath, null);
+        await this.ensureClaudeGlmSettings(worktreePath, null);
       }
     } catch (error) {
       log.error('Failed to clear Claude Code (GLM) settings from existing worktrees', error);
@@ -943,34 +943,48 @@ export class WorktreeService {
     }
   }
 
-  private ensureClaudeGlmSettings(worktreePath: string, apiKey?: string | null) {
+  private async ensureClaudeGlmSettings(worktreePath: string, apiKey?: string | null) {
     try {
       const claudeDir = path.join(worktreePath, '.claude');
       const settingsPath = path.join(claudeDir, 'settings.local.json');
       const cleanKey = typeof apiKey === 'string' ? apiKey.trim() : '';
       const hasKey = Boolean(cleanKey);
 
-      if (!hasKey && !fs.existsSync(settingsPath)) {
-        return;
+      // Check if settings file exists when clearing
+      if (!hasKey) {
+        try {
+          await fs.promises.access(settingsPath);
+        } catch {
+          // File doesn't exist, nothing to do
+          return;
+        }
       }
 
-      if (hasKey && !fs.existsSync(claudeDir)) {
-        fs.mkdirSync(claudeDir, { recursive: true });
+      // Create .claude directory if it doesn't exist
+      if (hasKey) {
+        try {
+          await fs.promises.access(claudeDir);
+        } catch {
+          await fs.promises.mkdir(claudeDir, { recursive: true });
+        }
       }
 
       let settings: Record<string, any> = {};
-      if (fs.existsSync(settingsPath)) {
+      try {
+        await fs.promises.access(settingsPath);
+        const content = await fs.promises.readFile(settingsPath, 'utf8');
         try {
-          const content = fs.readFileSync(settingsPath, 'utf8');
           const parsed = JSON.parse(content);
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             settings = parsed as Record<string, any>;
           } else {
             log.warn('Existing .claude/settings.local.json was not an object, will overwrite');
           }
-        } catch (err) {
-          log.warn('Failed to parse existing .claude/settings.local.json, will overwrite', err);
+        } catch (parseErr) {
+          log.warn('Failed to parse existing .claude/settings.local.json, will overwrite', parseErr);
         }
+      } catch (accessErr) {
+        // File doesn't exist or couldn't be read, use empty settings
       }
 
       const env = settings.env && typeof settings.env === 'object' ? { ...settings.env } : {};
@@ -995,9 +1009,10 @@ export class WorktreeService {
         delete settings.env;
       }
 
+      // Remove file if no settings remain and no key
       if (!hasKey && Object.keys(settings).length === 0) {
         try {
-          fs.unlinkSync(settingsPath);
+          await fs.promises.unlink(settingsPath);
           log.info(`Removed .claude/settings.local.json for GLM in ${worktreePath}`);
         } catch (err) {
           log.warn('Failed to remove .claude/settings.local.json for GLM', { worktreePath, error: err });
@@ -1005,7 +1020,7 @@ export class WorktreeService {
         return;
       }
 
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+      await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
       log.info(
         `${hasKey ? 'Updated' : 'Cleared'} .claude/settings.local.json for GLM in ${worktreePath}`
       );
