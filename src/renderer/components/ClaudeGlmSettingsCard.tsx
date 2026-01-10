@@ -13,7 +13,7 @@ const ClaudeGlmSettingsCard: React.FC = () => {
 
   const loadStatus = useCallback(async () => {
     try {
-      const status = await window.electronAPI.claudeGlmCheck();
+      const status = await window.electronAPI.claudeGlmCheck?.();
       setConnected(status?.connected ?? false);
       setError(null);
     } catch (err) {
