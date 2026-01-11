@@ -203,7 +203,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
               >
                 <p className="font-medium">Branch has pushed commits</p>
                 <p className="text-xs text-muted-foreground">
-                  Deleting this task will delete the branch and these commits will be lost.
+                  If you delete the branch, these commits will be lost.
                 </p>
               </motion.div>
             ) : null}

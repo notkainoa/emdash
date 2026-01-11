@@ -890,7 +890,9 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
                         onToggleSelect={() => toggleSelect(ws.id)}
                         active={activeTask?.id === ws.id}
                         onClick={() => onSelectTask(ws)}
-                        onDelete={() => onDeleteTask(project, ws)}
+                        onDelete={(deleteBranch) =>
+                          onDeleteTask(project, ws, { deleteBranch })
+                        }
                       />
                     ))}
                   </div>
