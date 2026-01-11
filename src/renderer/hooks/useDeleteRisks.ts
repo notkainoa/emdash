@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { isActivePr, PrInfo } from '../lib/prStatus';
 import { refreshPrStatus } from '../lib/prStatusStore';
 
@@ -22,7 +22,6 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
   const [risks, setRisks] = useState<RiskState>({});
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const isMounted = useRef(true);
 
   useEffect(() => {
     if (!enabled || tasks.length === 0) {
@@ -121,8 +120,7 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
         }
       }
 
-      // Only update state if component is still mounted
-      if (!cancelled && isMounted.current) {
+      if (!cancelled) {
         setRisks(next);
         setLoading(false);
         setLoaded(true);
@@ -130,7 +128,6 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
     };
     void load();
     return () => {
-      isMounted.current = false;
       cancelled = true;
     };
   }, [enabled, tasks]);
