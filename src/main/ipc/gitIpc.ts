@@ -42,8 +42,10 @@ async function ensureCommitted(taskPath: string): Promise<string[]> {
         );
         if (commitOut?.trim()) outputs.push(commitOut.trim());
         if (commitErr?.trim()) outputs.push(commitErr.trim());
-      } catch (commitErr) {
-        const msg = commitErr as string;
+      } catch (commitErr: any) {
+        const msg = [commitErr?.stdout, commitErr?.stderr, commitErr?.message]
+          .filter(Boolean)
+          .join('\n');
         if (msg && /nothing to commit/i.test(msg)) {
           outputs.push('git commit: nothing to commit');
         } else {
@@ -87,6 +89,32 @@ async function ensurePushed(taskPath: string): Promise<{ success: boolean; error
 /**
  * Helper: Resolve repository name with owner (e.g., "owner/repo")
  */
+function parseGithubRepoNameWithOwner(remoteUrl: string): string {
+  const url = remoteUrl.trim();
+
+  // Handle HTTPS (and similar) protocols: https://github.com/owner/repo(.git)
+  let match = url.match(
+    /^https?:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i
+  );
+  if (match) return `${match[1]}/${match[2]}`;
+
+  // Handle git protocol: git://github.com/owner/repo(.git)
+  match = url.match(/^git:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  if (match) return `${match[1]}/${match[2]}`;
+
+  // Handle SSH URL protocol: ssh://git@github.com[:port]/owner/repo(.git)
+  match = url.match(
+    /^ssh:\/\/(?:[^@/]+@)?github\.com(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i
+  );
+  if (match) return `${match[1]}/${match[2]}`;
+
+  // Handle SSH scp-like: git@github.com:owner/repo(.git)
+  match = url.match(/^(?:[^@]+@)?github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (match) return `${match[1]}/${match[2]}`;
+
+  return '';
+}
+
 async function resolveRepoNameWithOwner(taskPath: string): Promise<string> {
   try {
     const { stdout: repoOut } = await execAsync(
@@ -99,16 +127,8 @@ async function resolveRepoNameWithOwner(taskPath: string): Promise<string> {
       const { stdout: urlOut } = await execAsync('git remote get-url origin', {
         cwd: taskPath,
       });
-      const url = (urlOut || '').trim();
-      // Handle both SSH and HTTPS forms
-      const m =
-        url.match(/github\.com[/:]([^/]+)\/([^/.]+)(?:\.git)?$/i) ||
-        url.match(/([^/:]+)[:/]([^/]+)\/([^/.]+)(?:\.git)?$/i);
-      if (m) {
-        const owner = m[1].includes('github.com') ? m[1].split('github.com').pop() : m[1];
-        const repo = m[2] || m[3];
-        return `${owner}/${repo}`.replace(/^\/*/, '');
-      }
+      const parsed = parseGithubRepoNameWithOwner(urlOut || '');
+      if (parsed) return parsed;
     } catch (err) {
       log.debug('Failed to resolve repo name from git remote', { taskPath, err });
     }
@@ -143,12 +163,15 @@ async function getDefaultBranch(taskPath: string): Promise<string> {
     log.debug('Failed to get default branch from gh CLI', { taskPath, err });
   }
   try {
-    const { stdout } = await execAsync(
-      'git remote show origin | sed -n "/HEAD branch/s/.*: //p"',
+    // Use symbolic-ref to resolve origin/HEAD then take the last path part
+    const { stdout } = await execFileAsync(
+      'git',
+      ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
       { cwd: taskPath }
     );
-    const db2 = (stdout || '').trim();
-    if (db2) return db2;
+    const line = (stdout || '').trim();
+    const last = line.split('/').pop();
+    if (last) return last;
   } catch (err) {
     log.debug('Failed to get default branch from git remote', { taskPath, err });
   }
