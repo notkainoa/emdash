@@ -214,12 +214,20 @@ function buildCleanEnv(extraEnv?: Record<string, string>): Record<string, string
 }
 
 function resolveAdapterCommand(providerId: string): { command: string; args: string[] }[] {
+  const preferSystem = process.env.EMDASH_ACP_PREFER_SYSTEM === '1';
+
   if (providerId === 'codex') {
-    const preferSystem = process.env.EMDASH_ACP_PREFER_SYSTEM === '1';
     const npxCmd = { command: 'npx', args: ['-y', '@zed-industries/codex-acp@latest'] };
     const systemCmd = { command: 'codex-acp', args: [] };
     return preferSystem ? [systemCmd, npxCmd] : [npxCmd, systemCmd];
   }
+
+  if (providerId === 'claude') {
+    const npxCmd = { command: 'npx', args: ['-y', '@zed-industries/claude-code-acp@latest'] };
+    const systemCmd = { command: 'claude-code-acp', args: [] };
+    return preferSystem ? [systemCmd, npxCmd] : [npxCmd, systemCmd];
+  }
+
   return [];
 }
 
@@ -255,6 +263,16 @@ class AcpService {
           taskId,
           providerId,
           note: 'OPENAI_API_KEY or CODEX_API_KEY not set; adapter may rely on ChatGPT auth.',
+        });
+      }
+    }
+
+    if (providerId === 'claude') {
+      if (!process.env.ANTHROPIC_API_KEY) {
+        log.warn('acp:startSession:missingApiKey', {
+          taskId,
+          providerId,
+          note: 'ANTHROPIC_API_KEY not set; Claude ACP adapter may fail to authenticate.',
         });
       }
     }

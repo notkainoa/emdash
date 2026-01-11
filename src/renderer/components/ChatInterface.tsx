@@ -67,7 +67,7 @@ const ChatInterface: React.FC<Props> = ({
   // Auto-scroll to bottom when this task becomes active
   useAutoScrollOnTaskSwitch(true, task.id);
 
-  const useAcpChat = provider === 'codex' && chatUiEnabled;
+  const useAcpChat = (provider === 'codex' || provider === 'claude') && chatUiEnabled;
 
   // Unified Plan Mode (per task)
   const planScope = useMemo(
