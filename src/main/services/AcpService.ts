@@ -82,7 +82,7 @@ type PermissionResponseArgs = {
 type SessionKey = string;
 
 const PROTOCOL_VERSION = 1;
-const CODEX_ALLOWED_REASONING = new Set(['minimal', 'low', 'medium', 'high']);
+const CODEX_ALLOWED_REASONING = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 const ACP_LOG_RAW = process.env.EMDASH_ACP_LOG_RAW === '1';
 
 type CodexConfigSummary = {
@@ -117,7 +117,7 @@ async function readCodexConfigSummary(): Promise<CodexConfigSummary | null> {
     const model = modelMatch?.[1]?.trim() || null;
     let error: string | null = null;
     if (reasoning && !CODEX_ALLOWED_REASONING.has(reasoning)) {
-      error = `Invalid Codex config: model_reasoning_effort="${reasoning}". Use one of: minimal, low, medium, high in ~/.codex/config.toml.`;
+      error = `Invalid Codex config: model_reasoning_effort="${reasoning}". Use one of: minimal, low, medium, high, xhigh in ~/.codex/config.toml.`;
     }
     return { path: configPath, model, reasoningEffort: reasoning, error };
   } catch (error: unknown) {
