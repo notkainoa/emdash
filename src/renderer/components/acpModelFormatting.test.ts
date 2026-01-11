@@ -12,9 +12,9 @@ describe('formatClaudeModelOptionsForUi', () => {
     ];
 
     expect(formatClaudeModelOptionsForUi(input)).toEqual([
-      { id: 'opus', label: 'Claude 4.5 Opus' },
-      { id: 'default', label: 'Claude 4.5 Sonnet' },
-      { id: 'haiku', label: 'Claude 4.5 Haiku' },
+      { id: 'opus', label: 'Opus 4.5' },
+      { id: 'default', label: 'Sonnet 4.5' },
+      { id: 'haiku', label: 'Haiku 4.5' },
     ]);
   });
 
@@ -26,9 +26,9 @@ describe('formatClaudeModelOptionsForUi', () => {
     ];
 
     expect(formatClaudeModelOptionsForUi(input)).toEqual([
-      { id: 'claude-opus-4-5', label: 'Claude 4.5 Opus' },
-      { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
-      { id: 'claude-haiku-4-5', label: 'Claude 4.5 Haiku' },
+      { id: 'claude-opus-4-5', label: 'Opus 4.5' },
+      { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
+      { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
     ]);
   });
 

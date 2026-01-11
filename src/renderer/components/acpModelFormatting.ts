@@ -20,9 +20,9 @@ export const formatClaudeModelOptionsForUi = (options: ModelOption[]): ModelOpti
   const haiku = byKey.get('haiku');
 
   const mapped: ModelOption[] = [];
-  if (opus) mapped.push({ ...opus, label: 'Claude 4.5 Opus' });
-  if (sonnet) mapped.push({ ...sonnet, label: 'Claude 4.5 Sonnet' });
-  if (haiku) mapped.push({ ...haiku, label: 'Claude 4.5 Haiku' });
+  if (opus) mapped.push({ ...opus, label: 'Opus 4.5' });
+  if (sonnet) mapped.push({ ...sonnet, label: 'Sonnet 4.5' });
+  if (haiku) mapped.push({ ...haiku, label: 'Haiku 4.5' });
 
   return mapped;
 };
