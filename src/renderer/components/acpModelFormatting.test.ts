@@ -18,6 +18,20 @@ describe('formatClaudeModelOptionsForUi', () => {
     ]);
   });
 
+  it('maps Claude full ids to friendly labels', () => {
+    const input = [
+      { id: 'claude-opus-4-5', label: 'claude-opus-4-5' },
+      { id: 'claude-sonnet-4-5', label: 'claude-sonnet-4-5' },
+      { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5' },
+    ];
+
+    expect(formatClaudeModelOptionsForUi(input)).toEqual([
+      { id: 'claude-opus-4-5', label: 'Claude 4.5 Opus' },
+      { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
+      { id: 'claude-haiku-4-5', label: 'Claude 4.5 Haiku' },
+    ]);
+  });
+
   it('returns empty array when no known models present', () => {
     expect(formatClaudeModelOptionsForUi([{ id: 'unknown', label: '???' }])).toEqual([]);
   });

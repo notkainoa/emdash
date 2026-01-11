@@ -410,6 +410,8 @@ const getBudgetFromConfig = (option?: AcpConfigOption | null): ThinkingBudgetLev
   return inferred;
 };
 
+const isUltrathinkEnabled = (value: string) => value === '1' || value.toLowerCase() === 'true';
+
 const findThinkingConfigOption = (options: AcpConfigOption[]): AcpConfigOption | null => {
   let best: { option: AcpConfigOption; score: number } | null = null;
   for (const option of options) {
@@ -543,6 +545,7 @@ const AcpChatInterface: React.FC<Props> = ({
   });
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
+  const [isUltrathink, setIsUltrathink] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -824,8 +827,12 @@ const AcpChatInterface: React.FC<Props> = ({
       setModelId(storedModel);
     }
     const storedBudget = readLocalStorage(thinkingStorageKey);
-    if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
-      setThinkingBudget(storedBudget);
+    if (storedBudget) {
+      if (provider === 'claude') {
+        setIsUltrathink(isUltrathinkEnabled(storedBudget));
+      } else if (isThinkingBudgetLevel(storedBudget)) {
+        setThinkingBudget(storedBudget);
+      }
     }
   }, [historyReady, historyHasMessages, acpConversationId, modelStorageKey, thinkingStorageKey]);
 
@@ -1081,13 +1088,21 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
     const displayBlocks = [...contentBlocks];
 
+    if (provider === 'claude' && isUltrathink) {
+      const lastBlock = displayBlocks[displayBlocks.length - 1];
+      if (lastBlock && lastBlock.type === 'text' && typeof lastBlock.text === 'string') {
+        lastBlock.text = `${lastBlock.text}\n\nULTRATHINK`;
+      }
+    }
+
     const agentBlocks: ContentBlock[] = [];
     if (planMode) {
       if (includePlanInstruction)
         agentBlocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
       else agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
     }
-    agentBlocks.push(...contentBlocks);
+
+    agentBlocks.push(...displayBlocks);
 
     return { display: displayBlocks, agent: agentBlocks };
   };
@@ -1252,7 +1267,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     [thinkingConfigOption]
   );
   const modelDrivenBudget = useMemo(() => budgetFromEffort(currentEffort), [currentEffort]);
-  const showThinkingBudget = provider === 'codex';
+  const showThinkingBudget =
+    provider === 'codex' || provider === 'claude' || Boolean(thinkingConfigId);
   const fallbackThinkingConfigId = showThinkingBudget ? 'model_reasoning_effort' : null;
   const availableBudgetLevels = useMemo(() => {
     if (thinkingConfigMapping.availableLevels.size) {
@@ -1353,15 +1369,29 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       if (modelValue) {
         writeLocalStorage(modelStorageKey, modelValue);
       }
+
+      if (!showThinkingBudget) return;
+      if (provider === 'claude') {
+        writeLocalStorage(thinkingStorageKey, isUltrathink ? '1' : '0');
+        return;
+      }
+
       const budgetValue = persistedThinkingBudgetRef.current;
-      if (showThinkingBudget && budgetValue) {
+      if (budgetValue) {
         writeLocalStorage(thinkingStorageKey, budgetValue);
       }
     };
-  }, [modelStorageKey, thinkingStorageKey, showThinkingBudget]);
+  }, [isUltrathink, modelStorageKey, provider, thinkingStorageKey, showThinkingBudget]);
 
   const handleThinkingBudgetClick = useCallback(() => {
     if (!showThinkingBudget) return;
+
+    if (provider === 'claude') {
+      const next = !isUltrathink;
+      setIsUltrathink(next);
+      writeLocalStorage(thinkingStorageKey, next ? '1' : '0');
+      return;
+    }
 
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
     setThinkingBudget(next);
@@ -1409,15 +1439,17 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     });
   }, [
     activeBudgetLevel,
-    canSetThinkingBudget,
-    showThinkingBudget,
-    fallbackThinkingConfigId,
     availableBudgetLevels,
+    canSetThinkingBudget,
+    fallbackThinkingConfigId,
+    isUltrathink,
+    provider,
+    selectedModelEntry,
+    sessionActions,
+    showThinkingBudget,
     thinkingConfigId,
     thinkingConfigMapping.budgetToChoice,
     thinkingStorageKey,
-    selectedModelEntry,
-    sessionActions,
     uiLog,
   ]);
 
@@ -2536,13 +2568,22 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                       type="button"
                       onClick={handleThinkingBudgetClick}
                       title={
-                        canSetThinkingBudget
-                          ? `Thinking budget: ${activeBudgetLabel}`
-                          : `Thinking budget: ${activeBudgetLabel} (not supported)`
+                        provider === 'claude'
+                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'} (appends ULTRATHINK)`
+                          : canSetThinkingBudget
+                            ? `Thinking budget: ${activeBudgetLabel}`
+                            : `Thinking budget: ${activeBudgetLabel} (not supported)`
                       }
-                      aria-label={`Thinking budget: ${activeBudgetLabel}`}
-                      disabled={!canSetThinkingBudget}
-                      className="flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
+                      aria-label={
+                        provider === 'claude'
+                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'}`
+                          : `Thinking budget: ${activeBudgetLabel}`
+                      }
+                      aria-pressed={provider === 'claude' ? isUltrathink : undefined}
+                      disabled={provider === 'claude' ? false : !canSetThinkingBudget}
+                      className={`flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15 ${
+                        provider === 'claude' ? 'ring-1 ring-violet-500/20' : ''
+                      }`}
                     >
                       <Brain className="h-4 w-4" />
                       <span
@@ -2560,7 +2601,11 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                           />
                         ))}
                       </span>
-                      <span className="text-xs font-medium">{activeBudgetLabel}</span>
+                      <span className="text-xs font-medium">
+                        {provider === 'claude'
+                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'}`
+                          : activeBudgetLabel}
+                      </span>
                     </button>
                   ) : null}
                 </div>
