@@ -235,10 +235,9 @@ export function registerGitIpc() {
 
       if (!defaultBranchFromGh) {
         try {
-          const { stdout } = await execAsync(
-            'git symbolic-ref --short refs/remotes/origin/HEAD',
-            { cwd: taskPath }
-          );
+          const { stdout } = await execAsync('git symbolic-ref --short refs/remotes/origin/HEAD', {
+            cwd: taskPath,
+          });
           const line = (stdout || '').trim();
           const last = line.split('/').pop();
           if (last) defaultBranch = last;
@@ -283,6 +282,172 @@ export function registerGitIpc() {
         error: errorText || undefined,
         code,
       };
+    }
+  );
+
+  // Git: Check if user has a fork of the repository
+  ipcMain.handle(
+    'git:check-fork',
+    async (_, args: { taskPath: string }) => {
+      const { taskPath } = args || {};
+      if (!taskPath) {
+        return { success: false, error: 'taskPath is required' };
+      }
+
+      try {
+        // Get current user's login
+        const { stdout: userStdout } = await execAsync('gh api user --jq .login', {
+          cwd: taskPath,
+        });
+        const currentUser = (userStdout || '').trim();
+        if (!currentUser) {
+          return { success: false, error: 'Could not determine current user' };
+        }
+
+        // Get the upstream repo info
+        const { stdout: repoStdout } = await execAsync(
+          'gh repo view --json nameWithOwner,owner',
+          { cwd: taskPath }
+        );
+        const repoInfo = JSON.parse(repoStdout || '{}');
+        const upstreamOwner = repoInfo?.owner?.login;
+        const repoName = repoInfo?.name;
+
+        if (!upstreamOwner || !repoName) {
+          return { success: false, error: 'Could not determine upstream repository' };
+        }
+
+        // Check if current user owns the repo (not a fork scenario)
+        if (upstreamOwner === currentUser) {
+          return { success: true, hasFork: false, isOwner: true };
+        }
+
+        // Check if user has a fork by trying to view it
+        const forkNameWithOwner = `${currentUser}/${repoName}`;
+        try {
+          const { stdout: forkStdout } = await execAsync(
+            `gh repo view ${forkNameWithOwner} --json url,nameWithOwner,parent`,
+            { cwd: taskPath }
+          );
+          const forkInfo = JSON.parse(forkStdout || '{}');
+          return {
+            success: true,
+            hasFork: true,
+            forkUrl: forkInfo?.url,
+            forkNameWithOwner: forkInfo?.nameWithOwner,
+            parentUrl: forkInfo?.parent?.url,
+          };
+        } catch (forkError) {
+          // Fork doesn't exist
+          return {
+            success: true,
+            hasFork: false,
+            isOwner: false,
+            suggestedForkName: forkNameWithOwner,
+          };
+        }
+      } catch (error) {
+        const errorText = getExecErrorOutput(error);
+        return { success: false, error: errorText || 'Failed to check for fork' };
+      }
+    }
+  );
+
+  // Git: Create a fork of the repository
+  ipcMain.handle(
+    'git:create-fork',
+    async (_, args: { taskPath: string }) => {
+      const { taskPath } = args || {};
+      if (!taskPath) {
+        return { success: false, error: 'taskPath is required' };
+      }
+
+      try {
+        // Create fork without cloning
+        const { stdout } = await execAsync('gh repo fork --clone=false', {
+          cwd: taskPath,
+        });
+
+        // The output typically contains the fork URL
+        let forkUrl = '';
+        const urlMatch = stdout.match(/https:\/\/github\.com\/[^\/\s]+\/[^\/\s]+/);
+        if (urlMatch) {
+          forkUrl = urlMatch[0];
+        }
+
+        // Get fork info to confirm
+        const { stdout: userStdout } = await execAsync('gh api user --jq .login', {
+          cwd: taskPath,
+        });
+        const currentUser = (userStdout || '').trim();
+
+        // Get upstream repo name
+        const { stdout: repoStdout } = await execAsync('gh repo view --json name', {
+          cwd: taskPath,
+        });
+        const repoInfo = JSON.parse(repoStdout || '{}');
+        const repoName = repoInfo?.name;
+
+        if (currentUser && repoName) {
+          forkUrl = `https://github.com/${currentUser}/${repoName}`;
+        }
+
+        return {
+          success: true,
+          forkUrl,
+          forkNameWithOwner: `${currentUser}/${repoName}`,
+        };
+      } catch (error) {
+        const errorText = getExecErrorOutput(error);
+        let code: string | undefined;
+        if (AUTH_APP_RESTRICTION_RE.test(errorText)) {
+          code = 'ORG_AUTH_APP_RESTRICTED';
+        } else if (GH_AUTH_REQUIRED_RE.test(errorText)) {
+          code = 'GH_NOT_AUTHENTICATED';
+        } else if (GH_NOT_INSTALLED_RE.test(errorText)) {
+          code = 'GH_NOT_INSTALLED';
+        }
+
+        return {
+          success: false,
+          error: errorText || 'Failed to create fork',
+          code,
+        };
+      }
+    }
+  );
+
+  // Git: Push to a fork URL
+  ipcMain.handle(
+    'git:push-to-fork',
+    async (
+      _,
+      args: { taskPath: string; forkUrl: string; branch: string; force?: boolean }
+    ) => {
+      const { taskPath, forkUrl, branch, force = false } = args || {};
+      if (!taskPath || !forkUrl || !branch) {
+        return {
+          success: false,
+          error: 'taskPath, forkUrl, and branch are required',
+        };
+      }
+
+      try {
+        const forceFlag = force ? '--force' : '';
+        // Push directly to the fork URL
+        const { stdout, stderr } = await execAsync(
+          `git push ${forkUrl} HEAD:${branch} ${forceFlag}`,
+          { cwd: taskPath }
+        );
+
+        return {
+          success: true,
+          output: stdout || stderr,
+        };
+      } catch (error) {
+        const errorText = getExecErrorOutput(error);
+        return { success: false, error: errorText || 'Failed to push to fork' };
+      }
     }
   );
 

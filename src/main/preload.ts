@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('git:generate-pr-content', args),
   checkPrAccess: (args: { taskPath: string; base?: string; head?: string }) =>
     ipcRenderer.invoke('git:check-pr-access', args),
+  checkFork: (args: { taskPath: string }) => ipcRenderer.invoke('git:check-fork', args),
+  createFork: (args: { taskPath: string }) => ipcRenderer.invoke('git:create-fork', args),
+  pushToFork: (args: { taskPath: string; forkUrl: string; branch: string; force?: boolean }) =>
+    ipcRenderer.invoke('git:push-to-fork', args),
   createPullRequest: (args: {
     taskPath: string;
     title?: string;

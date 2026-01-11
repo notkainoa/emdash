@@ -400,6 +400,33 @@ declare global {
         code?: string;
         error?: string;
       }>;
+      checkFork: (args: { taskPath: string }) => Promise<{
+        success: boolean;
+        hasFork?: boolean;
+        isOwner?: boolean;
+        forkUrl?: string;
+        forkNameWithOwner?: string;
+        parentUrl?: string;
+        suggestedForkName?: string;
+        error?: string;
+      }>;
+      createFork: (args: { taskPath: string }) => Promise<{
+        success: boolean;
+        forkUrl?: string;
+        forkNameWithOwner?: string;
+        error?: string;
+        code?: string;
+      }>;
+      pushToFork: (args: {
+        taskPath: string;
+        forkUrl: string;
+        branch: string;
+        force?: boolean;
+      }) => Promise<{
+        success: boolean;
+        output?: string;
+        error?: string;
+      }>;
       createPullRequest: (args: {
         taskPath: string;
         title?: string;
@@ -942,6 +969,33 @@ export interface ElectronAPI {
     defaultBranch?: string;
     currentBranch?: string;
     code?: string;
+    error?: string;
+  }>;
+  checkFork: (args: { taskPath: string }) => Promise<{
+    success: boolean;
+    hasFork?: boolean;
+    isOwner?: boolean;
+    forkUrl?: string;
+    forkNameWithOwner?: string;
+    parentUrl?: string;
+    suggestedForkName?: string;
+    error?: string;
+  }>;
+  createFork: (args: { taskPath: string }) => Promise<{
+    success: boolean;
+    forkUrl?: string;
+    forkNameWithOwner?: string;
+    error?: string;
+    code?: string;
+  }>;
+  pushToFork: (args: {
+    taskPath: string;
+    forkUrl: string;
+    branch: string;
+    force?: boolean;
+  }) => Promise<{
+    success: boolean;
+    output?: string;
     error?: string;
   }>;
   createPullRequest: (args: {

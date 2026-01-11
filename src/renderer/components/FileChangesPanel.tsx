@@ -37,7 +37,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({
   const [revertingFiles, setRevertingFiles] = useState<Set<string>>(new Set());
   const [commitMessage, setCommitMessage] = useState('');
   const [isCommitting, setIsCommitting] = useState(false);
-  const { isCreating: isCreatingPR, createPR } = useCreatePR();
+  const { isCreating: isCreatingPR, createPR, forkModal } = useCreatePR();
   const { fileChanges, refreshChanges } = useFileChanges(safeTaskPath);
   const { toast } = useToast();
   const hasChanges = fileChanges.length > 0;
@@ -520,6 +520,7 @@ const FileChangesPanelComponent: React.FC<FileChangesPanelProps> = ({
           onRefreshChanges={refreshChanges}
         />
       )}
+      {forkModal}
     </div>
   );
 };
