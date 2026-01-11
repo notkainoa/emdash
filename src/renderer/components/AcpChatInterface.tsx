@@ -173,8 +173,8 @@ const PROVIDER_MODELS: Record<string, ModelOption[]> = {
     { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
   claude: [
-    { id: 'claude-opus-4-5', label: 'Claude 4.5 Opus' },
-    { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
+    { id: 'claude-opus-4-5', label: 'Opus 4.5' },
+    { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
   ],
 };
 
