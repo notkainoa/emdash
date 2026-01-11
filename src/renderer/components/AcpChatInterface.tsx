@@ -2569,43 +2569,59 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                       onClick={handleThinkingBudgetClick}
                       title={
                         provider === 'claude'
-                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'} (appends ULTRATHINK)`
+                          ? isUltrathink
+                            ? 'Ultrathink (appends ULTRATHINK)'
+                            : 'Enable Ultrathink (appends ULTRATHINK)'
                           : canSetThinkingBudget
                             ? `Thinking budget: ${activeBudgetLabel}`
                             : `Thinking budget: ${activeBudgetLabel} (not supported)`
                       }
                       aria-label={
                         provider === 'claude'
-                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'}`
+                          ? isUltrathink
+                            ? 'Ultrathink enabled'
+                            : 'Ultrathink disabled'
                           : `Thinking budget: ${activeBudgetLabel}`
                       }
                       aria-pressed={provider === 'claude' ? isUltrathink : undefined}
                       disabled={provider === 'claude' ? false : !canSetThinkingBudget}
-                      className={`flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15 ${
-                        provider === 'claude' ? 'ring-1 ring-violet-500/20' : ''
+                      className={`flex h-8 items-center gap-2 rounded-md px-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                        provider === 'claude'
+                          ? isUltrathink
+                            ? 'bg-violet-100/70 text-violet-700 ring-1 ring-violet-500/30 hover:bg-violet-100/90 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/20'
+                            : 'bg-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                          : 'bg-violet-100/70 text-violet-700 hover:bg-violet-100/90 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15'
                       }`}
                     >
-                      <Brain className="h-4 w-4" />
-                      <span
-                        className="flex flex-col-reverse items-center justify-center"
-                        style={{ gap: `${dotGap}px` }}
-                        aria-hidden="true"
-                      >
-                        {Array.from({ length: dotCount }).map((_, idx) => (
+                      <Brain
+                        className={`h-4 w-4 ${
+                          provider === 'claude' && !isUltrathink ? 'opacity-70' : ''
+                        }`}
+                      />
+                      {provider === 'claude' ? (
+                        isUltrathink ? (
+                          <span className="text-xs font-medium">Ultrathink</span>
+                        ) : null
+                      ) : (
+                        <>
                           <span
-                            key={`thinking-dot-${idx}`}
-                            style={{ width: `${dotSize}px`, height: `${dotSize}px` }}
-                            className={`rounded-full ${
-                              idx <= activeBudgetIndex ? 'bg-current' : 'bg-muted-foreground/30'
-                            }`}
-                          />
-                        ))}
-                      </span>
-                      <span className="text-xs font-medium">
-                        {provider === 'claude'
-                          ? `Ultrathink: ${isUltrathink ? 'On' : 'Off'}`
-                          : activeBudgetLabel}
-                      </span>
+                            className="flex flex-col-reverse items-center justify-center"
+                            style={{ gap: `${dotGap}px` }}
+                            aria-hidden="true"
+                          >
+                            {Array.from({ length: dotCount }).map((_, idx) => (
+                              <span
+                                key={`thinking-dot-${idx}`}
+                                style={{ width: `${dotSize}px`, height: `${dotSize}px` }}
+                                className={`rounded-full ${
+                                  idx <= activeBudgetIndex ? 'bg-current' : 'bg-muted-foreground/30'
+                                }`}
+                              />
+                            ))}
+                          </span>
+                          <span className="text-xs font-medium">{activeBudgetLabel}</span>
+                        </>
+                      )}
                     </button>
                   ) : null}
                 </div>
