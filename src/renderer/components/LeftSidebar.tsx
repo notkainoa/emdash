@@ -43,7 +43,11 @@ interface LeftSidebarProps {
   }) => void;
   onCreateTaskForProject?: (project: Project) => void;
   isCreatingTask?: boolean;
-  onDeleteTask?: (project: Project, task: Task) => void | Promise<void | boolean>;
+  onDeleteTask?: (
+    project: Project,
+    task: Task,
+    options?: { silent?: boolean; deleteBranch?: boolean }
+  ) => void | Promise<void | boolean>;
   onDeleteProject?: (project: Project) => void | Promise<void>;
   isHomeView?: boolean;
 }
@@ -317,7 +321,10 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                           showDirectBadge={false}
                                           onDelete={
                                             onDeleteTask
-                                              ? () => onDeleteTask(typedProject, task)
+                                              ? (deleteBranch) =>
+                                                  onDeleteTask(typedProject, task, {
+                                                    deleteBranch,
+                                                  })
                                               : undefined
                                           }
                                         />
