@@ -98,7 +98,6 @@ declare global {
         upstream?: string;
         aheadCount?: number;
         behindCount?: number;
-        hasPushedCommits?: boolean;
         path?: string;
         rootPath?: string;
         error?: string;

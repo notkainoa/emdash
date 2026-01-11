@@ -434,6 +434,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [acknowledgeDirtyDelete, setAcknowledgeDirtyDelete] = useState(false);
+  const [deleteBranchesWithPushedCommits, setDeleteBranchesWithPushedCommits] = useState(false);
 
   const tasksInProject = project.tasks ?? [];
   const selectedCount = selectedIds.size;
@@ -450,6 +451,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
         untracked: number;
         ahead: number;
         behind: number;
+        hasPushedCommits: boolean;
         error?: string;
         pr?: PrInfo | null;
       }
@@ -520,7 +522,9 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
     const deletedNames: string[] = [];
     for (const ws of toDelete) {
       try {
-        const result = await onDeleteTask(project, ws, { silent: true });
+        const hasPushedCommits = deleteStatus[ws.id]?.hasPushedCommits === true;
+        const deleteBranch = hasPushedCommits ? deleteBranchesWithPushedCommits : true;
+        const result = await onDeleteTask(project, ws, { silent: true, deleteBranch });
         if (result !== false) {
           deletedNames.push(ws.name);
         }
@@ -558,6 +562,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
     if (!showDeleteDialog) {
       setDeleteStatus({});
       setAcknowledgeDirtyDelete(false);
+      setDeleteBranchesWithPushedCommits(false);
       return;
     }
 
@@ -568,9 +573,9 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
 
       for (const ws of selectedTasks) {
         try {
-          const [statusRes, infoRes, rawPr] = await Promise.allSettled([
+          const [statusRes, branchRes, rawPr] = await Promise.allSettled([
             window.electronAPI.getGitStatus(ws.path),
-            window.electronAPI.getGitInfo(ws.path),
+            window.electronAPI.getBranchStatus({ taskPath: ws.path }),
             refreshPrStatus(ws.path),
           ]);
 
@@ -594,13 +599,15 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
           }
 
           const ahead =
-            infoRes.status === 'fulfilled' && typeof infoRes.value?.aheadCount === 'number'
-              ? infoRes.value.aheadCount
+            branchRes.status === 'fulfilled' && typeof branchRes.value?.ahead === 'number'
+              ? branchRes.value.ahead
               : 0;
           const behind =
-            infoRes.status === 'fulfilled' && typeof infoRes.value?.behindCount === 'number'
-              ? infoRes.value.behindCount
+            branchRes.status === 'fulfilled' && typeof branchRes.value?.behind === 'number'
+              ? branchRes.value.behind
               : 0;
+          const hasPushedCommits =
+            branchRes.status === 'fulfilled' && branchRes.value?.hasPushedCommits === true;
           const prValue = rawPr.status === 'fulfilled' ? rawPr.value : null;
           const pr = isActivePr(prValue) ? prValue : null;
 
@@ -610,6 +617,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
             untracked,
             ahead,
             behind,
+            hasPushedCommits,
             error:
               statusRes.status === 'fulfilled'
                 ? statusRes.value?.error
@@ -623,6 +631,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
             untracked: 0,
             ahead: 0,
             behind: 0,
+            hasPushedCommits: false,
             error: error?.message || String(error),
           };
         }
@@ -915,7 +924,7 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete tasks?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the selected tasks and their worktrees.
+              This will delete the selected tasks from Emdash. Worktrees and branches will also be removed, except tasks with pushed commits (kept by default).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-3">
@@ -979,6 +988,54 @@ const ProjectMainView: React.FC<ProjectMainViewProps> = ({
                         );
                       })}
                     </ul>
+                  </motion.div>
+                ) : null;
+              })()}
+            </AnimatePresence>
+
+            <AnimatePresence initial={false}>
+              {(() => {
+                const tasksWithPushedCommits = selectedTasks.filter(
+                  (ws) => deleteStatus[ws.id]?.hasPushedCommits === true
+                );
+
+                return tasksWithPushedCommits.length > 0 && !deleteStatusLoading ? (
+                  <motion.div
+                    key="bulk-pushed-commits"
+                    initial={{ opacity: 0, y: 6, scale: 0.99 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.99 }}
+                    transition={{ duration: 0.2, ease: 'easeOut', delay: 0.01 }}
+                    className="space-y-2 rounded-md border border-red-300/60 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-50"
+                  >
+                    <p className="font-medium">
+                      {tasksWithPushedCommits.length === 1
+                        ? 'Branch has pushed commits'
+                        : 'Branches have pushed commits'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      These branches will be kept by default. If you delete them, any unmerged
+                      commits may be lost.
+                    </p>
+                    <ul className="space-y-1">
+                      {tasksWithPushedCommits.map((ws) => (
+                        <li
+                          key={ws.id}
+                          className="flex items-center gap-2 rounded-md bg-red-50/80 px-2 py-1 text-sm text-red-900 dark:bg-red-500/10 dark:text-red-50"
+                        >
+                          <Folder className="h-4 w-4 fill-red-700 text-red-700" />
+                          <span className="font-medium">{ws.name}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <label className="flex items-start gap-2 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={deleteBranchesWithPushedCommits}
+                        onCheckedChange={(val) => setDeleteBranchesWithPushedCommits(val === true)}
+                        aria-label="Also delete branches and worktrees with pushed commits"
+                      />
+                      <span className="leading-tight">Also delete those branches and worktrees</span>
+                    </label>
                   </motion.div>
                 ) : null;
               })()}

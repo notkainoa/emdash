@@ -346,7 +346,6 @@ declare global {
         upstream?: string;
         aheadCount?: number;
         behindCount?: number;
-        hasPushedCommits?: boolean;
         path?: string;
         rootPath?: string;
         error?: string;
@@ -439,6 +438,7 @@ declare global {
         defaultBranch?: string;
         ahead?: number;
         behind?: number;
+        hasPushedCommits?: boolean;
         error?: string;
       }>;
       listRemoteBranches: (args: { projectPath: string; remote?: string }) => Promise<{
@@ -956,7 +956,6 @@ export interface ElectronAPI {
     upstream?: string;
     aheadCount?: number;
     behindCount?: number;
-    hasPushedCommits?: boolean;
     path?: string;
     error?: string;
   }>;

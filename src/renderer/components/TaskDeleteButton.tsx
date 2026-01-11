@@ -63,24 +63,13 @@ export const TaskDeleteButton: React.FC<Props> = ({
     status.unstaged > 0 ||
     status.untracked > 0 ||
     status.ahead > 0 ||
-    status.hasPushedCommits ||
     !!status.error ||
     !!(status.pr && isActivePr(status.pr));
 
-  // Check if this is a "pushed commits only" scenario (no other risks)
-  const hasPushedOnly =
-    !status.staged &&
-    !status.unstaged &&
-    !status.untracked &&
-    !status.ahead &&
-    status.hasPushedCommits &&
-    !status.error &&
-    !(status.pr && isActivePr(status.pr));
+  const willDeleteBranch = status.hasPushedCommits ? acknowledgeBranchDelete : true;
 
   const disableDelete: boolean =
-    Boolean(isDeleting || loading) ||
-    (risky && !acknowledge) ||
-    (hasPushedOnly && !acknowledgeBranchDelete);
+    Boolean(isDeleting || loading) || (risky && !acknowledge);
 
   React.useEffect(() => {
     if (!open) {
@@ -122,7 +111,10 @@ export const TaskDeleteButton: React.FC<Props> = ({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete task?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete this task and its worktree.
+            This will delete this task from Emdash.{' '}
+            {willDeleteBranch
+              ? 'Its worktree and branch will be removed from disk.'
+              : 'Your branch and worktree will be kept on disk.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-3 text-sm">
@@ -203,7 +195,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
               >
                 <p className="font-medium">Branch has pushed commits</p>
                 <p className="text-xs text-muted-foreground">
-                  If you delete the branch, these commits will be lost.
+                  If you delete the branch, any unmerged commits may be lost.
                 </p>
               </motion.div>
             ) : null}
@@ -245,7 +237,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
                   onChange={(e) => setAcknowledgeBranchDelete(e.target.checked)}
                 />
                 <span className="text-sm leading-tight text-foreground">
-                  Delete branch and lose all changes
+                  Also delete branch and worktree
                 </span>
               </motion.label>
             ) : null}
@@ -260,11 +252,7 @@ export const TaskDeleteButton: React.FC<Props> = ({
               e.stopPropagation();
               setOpen(false);
               try {
-                // Determine if branch should be deleted:
-                // - If there are pushed commits, only delete if checkbox is checked
-                // - Otherwise, default to true (preserve current behavior)
-                const deleteBranch = status.hasPushedCommits ? acknowledgeBranchDelete : true;
-                await onConfirm(deleteBranch);
+                await onConfirm(willDeleteBranch);
               } catch {}
             }}
           >

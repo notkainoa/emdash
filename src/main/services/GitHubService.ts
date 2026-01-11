@@ -606,6 +606,19 @@ export class GitHubService {
       // First check if gh CLI is authenticated system-wide
       const isGHAuth = await this.isGHCLIAuthenticated();
       if (isGHAuth) {
+        // Best-effort: cache a token for parts of the app that rely on keytar.
+        try {
+          const existing = await this.getStoredToken();
+          if (!existing) {
+            const { stdout } = await execAsync('gh auth token');
+            const token = String(stdout || '').trim();
+            if (token) {
+              await this.storeToken(token);
+            }
+          }
+        } catch {
+          // Non-fatal; gh CLI auth is still valid.
+        }
         return true;
       }
 

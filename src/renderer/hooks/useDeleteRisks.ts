@@ -39,9 +39,9 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
       const results = await Promise.allSettled(
         tasks.map(async (ws) => {
           try {
-            const [statusRes, infoRes, rawPr] = await Promise.allSettled([
+            const [statusRes, branchRes, rawPr] = await Promise.allSettled([
               (window as any).electronAPI?.getGitStatus?.(ws.path),
-              (window as any).electronAPI?.getGitInfo?.(ws.path),
+              (window as any).electronAPI?.getBranchStatus?.({ taskPath: ws.path }),
               refreshPrStatus(ws.path),
             ]);
 
@@ -65,15 +65,15 @@ export function useDeleteRisks(tasks: TaskRef[], enabled: boolean) {
             }
 
             const ahead =
-              infoRes.status === 'fulfilled' && typeof infoRes.value?.aheadCount === 'number'
-                ? infoRes.value.aheadCount
+              branchRes.status === 'fulfilled' && typeof branchRes.value?.ahead === 'number'
+                ? branchRes.value.ahead
                 : 0;
             const behind =
-              infoRes.status === 'fulfilled' && typeof infoRes.value?.behindCount === 'number'
-                ? infoRes.value.behindCount
+              branchRes.status === 'fulfilled' && typeof branchRes.value?.behind === 'number'
+                ? branchRes.value.behind
                 : 0;
             const hasPushedCommits =
-              infoRes.status === 'fulfilled' && infoRes.value?.hasPushedCommits === true;
+              branchRes.status === 'fulfilled' && branchRes.value?.hasPushedCommits === true;
             const prValue = rawPr.status === 'fulfilled' ? rawPr.value : null;
             const pr = isActivePr(prValue) ? prValue : null;
 
