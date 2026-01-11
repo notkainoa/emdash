@@ -653,7 +653,30 @@ current branch '${currentBranch}' ahead of base '${baseRef}'.`,
         } catch {}
       }
 
-      return { success: true, branch, defaultBranch, ahead, behind };
+      // Detect whether the current branch has commits pushed to the remote
+      let hasPushedCommits = false;
+      try {
+        const { stdout: remoteRef } = await execFileAsync(
+          GIT,
+          ['rev-parse', '--verify', `origin/${branch}`],
+          { cwd: taskPath }
+        );
+
+        if (remoteRef.trim()) {
+          const { stdout: mergeBase } = await execFileAsync(
+            GIT,
+            ['merge-base', `origin/${defaultBranch}`, `origin/${branch}`],
+            { cwd: taskPath }
+          );
+          const baseRef = mergeBase.trim();
+          const remoteRefHash = remoteRef.trim();
+          hasPushedCommits = remoteRefHash !== baseRef;
+        }
+      } catch {
+        hasPushedCommits = false;
+      }
+
+      return { success: true, branch, defaultBranch, ahead, behind, hasPushedCommits };
     } catch (error) {
       log.error('Failed to get branch status:', error);
       return { success: false, error: error as string };
