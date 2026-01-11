@@ -794,9 +794,10 @@ const handleSessionUpdate = (record: AcpSessionRecord, update: any) => {
     const entries = Array.isArray(update.entries) ? update.entries : [];
     updateState(record, (prev) => {
       const existing = prev.feed.find((item) => item.type === 'plan');
-      const nextFeed = existing
+      const planItem: FeedItem = { id: `plan-${Date.now()}`, type: 'plan', entries };
+      const nextFeed: FeedItem[] = existing
         ? prev.feed.map((item) => (item.type === 'plan' ? { ...item, entries } : item))
-        : [...prev.feed, { id: `plan-${Date.now()}`, type: 'plan', entries }];
+        : [...prev.feed, planItem];
       return { ...prev, plan: entries, feed: nextFeed };
     });
     maybePersistPlan(record, entries);

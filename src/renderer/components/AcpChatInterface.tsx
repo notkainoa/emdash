@@ -332,8 +332,8 @@ const detectBudgetLevel = (text: string): ThinkingBudgetLevel | null => {
     return 'minimal';
   if (/\blow\b/.test(text) || text === '1') return 'low';
   if (/\bmedium\b/.test(text) || text === '2') return 'medium';
-  if (/\bhigh\b/.test(text) || text === '3') return 'high';
   if (/\b(xhigh|extra\s*high)\b/.test(text) || text === '4') return 'xhigh';
+  if (/\bhigh\b/.test(text) || text === '3') return 'high';
   return null;
 };
 
