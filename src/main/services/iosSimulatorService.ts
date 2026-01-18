@@ -63,6 +63,11 @@ type BuildRunResult = {
   derivedDataPath?: string;
 };
 
+type XcodeCheckResult = {
+  ok: boolean;
+  error?: string;
+};
+
 type XcodeContainer = {
   type: 'workspace' | 'project';
   path: string;
@@ -273,6 +278,22 @@ const logTimings = (label: string, timings: Record<string, number>) => {
     .join(' ');
   if (!parts) return;
   console.info(`[iOS Simulator] ${label}: ${parts}`);
+};
+
+const checkXcodeAvailability = async (): Promise<XcodeCheckResult> => {
+  const res = await runCommand('xcodebuild', ['-version']);
+  if (res.ok) return { ok: true };
+  const stderr = res.stderr || res.error || '';
+  if (stderr.includes('xcode-select')) {
+    return {
+      ok: false,
+      error: 'Xcode is not installed. Install Xcode to use iOS simulators.',
+    };
+  }
+  return {
+    ok: false,
+    error: stderr || 'Xcode is not installed. Install Xcode to use iOS simulators.',
+  };
 };
 
 const isIosRuntime = (runtime: SimRuntime) => {
@@ -789,6 +810,11 @@ export async function listXcodeSchemes(projectPath: string): Promise<SchemeListR
     };
   }
 
+  const xcodeCheck = await checkXcodeAvailability();
+  if (!xcodeCheck.ok) {
+    return { ok: false, error: xcodeCheck.error, stage: 'xcode' };
+  }
+
   const listRes = await getXcodeSchemeList(projectPath);
   if (!listRes.ok || !listRes.schemes || !listRes.container) {
     return { ok: false, error: listRes.error, stage: listRes.stage };
@@ -815,6 +841,17 @@ export async function listIosSimulators(): Promise<SimListResult> {
 
   if (lastSimList && Date.now() - lastSimList.timestamp < SIM_LIST_CACHE_TTL_MS) {
     return lastSimList.result;
+  }
+
+  const xcodeCheck = await checkXcodeAvailability();
+  if (!xcodeCheck.ok) {
+    const result = {
+      ok: false,
+      error: xcodeCheck.error,
+      stage: 'xcode',
+    };
+    lastSimList = { timestamp: Date.now(), result };
+    return result;
   }
 
   const res = await runCommand('xcrun', ['simctl', 'list', '-j']);
@@ -862,6 +899,11 @@ export async function launchSimulator(udid: string): Promise<SimLaunchResult> {
     return { ok: false, error: 'iOS Simulator is only available on macOS.', stage: 'platform' };
   }
   if (!udid) return { ok: false, error: 'Simulator UDID is required.', stage: 'validation' };
+
+  const xcodeCheck = await checkXcodeAvailability();
+  if (!xcodeCheck.ok) {
+    return { ok: false, error: xcodeCheck.error, stage: 'xcode' };
+  }
 
   const taskId = startIosSimulatorTask();
   const timings: Record<string, number> = {};
@@ -1070,6 +1112,11 @@ export async function buildAndRunIosApp(
       error: 'Project path and simulator UDID are required.',
       stage: 'validation',
     };
+  }
+
+  const xcodeCheck = await checkXcodeAvailability();
+  if (!xcodeCheck.ok) {
+    return { ok: false, error: xcodeCheck.error, stage: 'xcode' };
   }
 
   const taskId = startIosSimulatorTask();

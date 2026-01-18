@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cable, Play, X } from 'lucide-react';
+import { AlertTriangle, Cable, ExternalLink, Play, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 import {
@@ -58,6 +58,8 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   const [bootedStatus, setBootedStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(
     'idle'
   );
+  const [devicesError, setDevicesError] = React.useState<string | null>(null);
+  const [devicesStage, setDevicesStage] = React.useState<string | null>(null);
   const [schemes, setSchemes] = React.useState<string[]>([]);
   const schemeCacheRef = React.useRef<{
     path: string;
@@ -109,6 +111,8 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     setHasUserSelectedScheme(false);
     setSchemeStatus('idle');
     setSchemeError(null);
+    setDevicesError(null);
+    setDevicesStage(null);
     if (!rootPath) {
       setIsDetecting(false);
       setIsIosProject(false);
@@ -141,6 +145,8 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
         return 'Validation';
       case 'platform':
         return 'Platform';
+      case 'xcode':
+        return 'Xcode';
       case 'simctl':
       case 'boot':
       case 'bootstatus':
@@ -231,12 +237,14 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   const hasSchemeError = schemeStatus === 'error';
   const hasDeviceError = devicesStatus === 'error' || bootedStatus === 'error';
   const showSchemeSelect = schemes.length > 1 || schemeStatus !== 'ready';
+  const hasNoDevices = devicesStatus === 'ready' && availableDevices.length === 0;
   const canRun =
     Boolean(selectedDevice) &&
     !isBusy &&
     !isInitialLoading &&
     Boolean(resolvedScheme) &&
-    !hasSchemeError;
+    !hasSchemeError &&
+    !hasNoDevices;
   const displayMode: 'running' | 'new' =
     selectedTarget?.mode ?? (runningSimulators.length > 0 ? 'running' : 'new');
   const actionLabel = displayMode === 'running' ? 'Attach' : 'Run';
@@ -266,16 +274,45 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       ? 'Checking for an iOS project'
       : schemeError
         ? `Unable to load schemes: ${schemeError}`
-        : displayMode === 'running'
-          ? 'Attach to a running simulator'
-          : 'Build and run in a new simulator';
+        : devicesError
+          ? `Simulator tools unavailable: ${devicesError}`
+          : hasNoDevices
+            ? 'No iOS simulators are installed'
+            : displayMode === 'running'
+              ? 'Attach to a running simulator'
+              : 'Build and run in a new simulator';
   const actionText = isCancelMode
     ? 'Cancel'
     : isBusy
       ? `Working${actionElapsed > 0 ? ` ${actionElapsed}s` : ''}`
       : isInitialLoading
         ? 'Loading'
-        : actionLabel;
+        : hasNoDevices
+          ? 'No simulators'
+          : actionLabel;
+  const emptyState = React.useMemo(() => {
+    if (devicesError) {
+      const isXcodeMissing = devicesStage === 'xcode';
+      return {
+        title: isXcodeMissing ? 'Install Xcode to continue' : 'Simulator tools unavailable',
+        message: isXcodeMissing ? null : 'Check your Xcode install and command line tools.',
+        linkUrl: isXcodeMissing
+          ? 'https://developer.apple.com/documentation/safari-developer-tools/installing-xcode-and-simulators'
+          : 'https://developer.apple.com/documentation/xcode',
+        linkLabel: isXcodeMissing ? 'Open Xcode install instructions' : 'Learn more',
+      };
+    }
+    if (hasNoDevices) {
+      return {
+        title: 'No simulators installed',
+        message: null,
+        linkLabel: 'Open simulator install instructions',
+        linkUrl:
+          'https://developer.apple.com/documentation/safari-developer-tools/adding-additional-simulators',
+      };
+    }
+    return null;
+  }, [devicesError, devicesStage, hasNoDevices]);
 
   React.useEffect(() => {
     if (!isBusy || !actionStartedAt) return;
@@ -297,9 +334,13 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
             : 'Select scheme';
   const devicePlaceholder = isDetecting
     ? 'Detecting iOS project...'
-    : devicesStatus === 'loading' || bootedStatus === 'loading'
-      ? 'Loading simulators...'
-      : 'Select simulator';
+    : devicesError
+      ? 'Simulator tools unavailable'
+      : hasNoDevices
+        ? 'No simulators installed'
+        : devicesStatus === 'loading' || bootedStatus === 'loading'
+          ? 'Loading simulators...'
+          : 'Select simulator';
 
   const formatDeviceLabel = (device: SimulatorDevice) => {
     const runtime = device.runtime?.name ? ` (${device.runtime.name})` : '';
@@ -385,11 +426,13 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       setHasUserSelectedScheme(false);
       if (lastSchemeErrorRef.current !== message) {
         lastSchemeErrorRef.current = message;
-        toast({
-          title: 'Unable to load schemes',
-          description: message,
-          variant: 'destructive',
-        });
+        if (res.stage !== 'xcode') {
+          toast({
+            title: 'Unable to load schemes',
+            description: message,
+            variant: 'destructive',
+          });
+        }
       }
       return;
     }
@@ -420,9 +463,19 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       setDevicesStatus('ready');
       setBootedDevices(res.devices.filter((device) => device.state === 'Booted'));
       setBootedStatus('ready');
-    } else if (!opts?.silent) {
-      setDevicesStatus('error');
-      setBootedStatus('error');
+      setDevicesError(null);
+      setDevicesStage(null);
+    } else {
+      const message = res.error || 'Simulator tools unavailable.';
+      setDevicesError(message);
+      setDevicesStage(res.stage ?? null);
+      if (!opts?.silent) {
+        setDevicesStatus('error');
+        setBootedStatus('error');
+      } else {
+        setDevicesStatus((current) => (current === 'loading' ? 'error' : current));
+        setBootedStatus((current) => (current === 'loading' ? 'error' : current));
+      }
     }
   }, []);
 
@@ -591,6 +644,31 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
               <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {actionChipLabel}
               </span>
+            </div>
+          ) : emptyState ? (
+            <div className="flex h-7 flex-1 items-center gap-2 px-3 text-xs text-muted-foreground">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">{emptyState.title}</div>
+                {emptyState.message ? (
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {emptyState.message}
+                  </div>
+                ) : null}
+              </div>
+              {emptyState.linkUrl ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="ml-auto h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => window.electronAPI?.openExternal?.(emptyState.linkUrl ?? '')}
+                  title={emptyState.linkLabel}
+                  aria-label={emptyState.linkLabel}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
             </div>
           ) : (
             <>
