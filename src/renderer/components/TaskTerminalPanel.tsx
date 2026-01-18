@@ -4,6 +4,7 @@ import { Bot, Terminal, Plus, X } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { useTaskTerminals } from '@/lib/taskTerminalsStore';
 import { cn } from '@/lib/utils';
+import IosSimulatorBar from './IosSimulatorBar';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { Button } from './ui/button';
 import {
@@ -262,6 +263,7 @@ const TaskTerminalPanelComponent: React.FC<Props> = ({
 
   return (
     <div className={cn('flex h-full flex-col bg-card', className)}>
+      <IosSimulatorBar projectPath={projectPath} taskPath={task?.path} />
       <div className="flex items-center gap-2 border-b border-border bg-muted px-2 py-1.5 dark:bg-background">
         <Select value={selectedValue ?? undefined} onValueChange={handleSelectChange}>
           <SelectTrigger className="h-7 min-w-0 flex-1 border-none bg-transparent px-2 text-xs shadow-none">
