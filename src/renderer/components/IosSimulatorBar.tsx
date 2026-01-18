@@ -222,11 +222,15 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     if (schemes.length === 1) return schemes[0];
     return null;
   }, [defaultScheme, schemes, selectedScheme]);
-  const isInitialLoading = isDetecting || devicesStatus === 'loading' || bootedStatus === 'loading';
+  const isInitialLoading =
+    isDetecting ||
+    devicesStatus === 'loading' ||
+    bootedStatus === 'loading' ||
+    schemeStatus === 'loading';
   const needsSchemeSelection = schemes.length > 1 && !resolvedScheme;
   const hasSchemeError = schemeStatus === 'error';
   const hasDeviceError = devicesStatus === 'error' || bootedStatus === 'error';
-  const showSchemeSelect = schemes.length > 1;
+  const showSchemeSelect = schemes.length > 1 || schemeStatus !== 'ready';
   const canRun =
     Boolean(selectedDevice) &&
     !isBusy &&
@@ -284,9 +288,13 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   const schemePlaceholder =
     schemeStatus === 'loading'
       ? 'Loading schemes...'
-      : schemeError
-        ? 'Schemes unavailable'
-        : 'Select scheme';
+      : schemeStatus === 'idle'
+        ? 'Load schemes'
+        : schemeError
+          ? 'Schemes unavailable'
+          : schemes.length === 0
+            ? 'No schemes'
+            : 'Select scheme';
   const devicePlaceholder = isDetecting
     ? 'Detecting iOS project...'
     : devicesStatus === 'loading' || bootedStatus === 'loading'
@@ -317,33 +325,29 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     [schemeStorageKey]
   );
 
-  const refreshSchemes = React.useCallback(async () => {
-    if (!rootPath) return;
-    const api = window.electronAPI;
-    if (!api?.iosSimulatorSchemes) return;
-
-    const cached = schemeCacheRef.current;
-    if (cached && cached.path === rootPath && Date.now() - cached.timestamp < 10 * 60 * 1000) {
-      setSchemes(cached.schemes);
-      setDefaultScheme(cached.defaultScheme);
+  const applySchemes = React.useCallback(
+    (nextSchemes: string[], nextDefault: string | null) => {
+      setSchemes(nextSchemes);
+      setDefaultScheme(nextDefault);
       setSchemeStatus('ready');
       setSchemeError(null);
+
       const previousSelection = selectedSchemeRef.current;
       let nextSelected: string | null = null;
       let nextHasUserSelected = hasUserSelectedSchemeRef.current;
 
-      if (nextHasUserSelected && previousSelection && cached.schemes.includes(previousSelection)) {
+      if (nextHasUserSelected && previousSelection && nextSchemes.includes(previousSelection)) {
         nextSelected = previousSelection;
       } else {
         const stored = readStoredScheme();
-        if (stored && cached.schemes.includes(stored)) {
+        if (stored && nextSchemes.includes(stored)) {
           nextSelected = stored;
           nextHasUserSelected = true;
-        } else if (cached.defaultScheme && cached.schemes.includes(cached.defaultScheme)) {
-          nextSelected = cached.defaultScheme;
+        } else if (nextDefault && nextSchemes.includes(nextDefault)) {
+          nextSelected = nextDefault;
           nextHasUserSelected = false;
-        } else if (cached.schemes.length === 1) {
-          nextSelected = cached.schemes[0];
+        } else if (nextSchemes.length === 1) {
+          nextSelected = nextSchemes[0];
           nextHasUserSelected = false;
         } else {
           nextSelected = null;
@@ -353,6 +357,19 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
 
       setSelectedScheme(nextSelected);
       setHasUserSelectedScheme(nextHasUserSelected);
+    },
+    [readStoredScheme]
+  );
+
+  const refreshSchemes = React.useCallback(async () => {
+    if (!rootPath) return;
+    if (schemeStatus === 'loading') return;
+    const api = window.electronAPI;
+    if (!api?.iosSimulatorSchemes) return;
+
+    const cached = schemeCacheRef.current;
+    if (cached && cached.path === rootPath && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+      applySchemes(cached.schemes, cached.defaultScheme);
       return;
     }
 
@@ -386,37 +403,8 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       defaultScheme: nextDefault,
       timestamp: Date.now(),
     };
-    setSchemes(nextSchemes);
-    setDefaultScheme(nextDefault);
-    setSchemeStatus('ready');
-    setSchemeError(null);
-
-    const previousSelection = selectedSchemeRef.current;
-    let nextSelected: string | null = null;
-    let nextHasUserSelected = hasUserSelectedSchemeRef.current;
-
-    if (nextHasUserSelected && previousSelection && nextSchemes.includes(previousSelection)) {
-      nextSelected = previousSelection;
-    } else {
-      const stored = readStoredScheme();
-      if (stored && nextSchemes.includes(stored)) {
-        nextSelected = stored;
-        nextHasUserSelected = true;
-      } else if (nextDefault && nextSchemes.includes(nextDefault)) {
-        nextSelected = nextDefault;
-        nextHasUserSelected = false;
-      } else if (nextSchemes.length === 1) {
-        nextSelected = nextSchemes[0];
-        nextHasUserSelected = false;
-      } else {
-        nextSelected = null;
-        nextHasUserSelected = false;
-      }
-    }
-
-    setSelectedScheme(nextSelected);
-    setHasUserSelectedScheme(nextHasUserSelected);
-  }, [readStoredScheme, rootPath, toast]);
+    applySchemes(nextSchemes, nextDefault);
+  }, [applySchemes, rootPath, schemeStatus, toast]);
 
   const refreshDeviceState = React.useCallback(async (opts?: { silent?: boolean }) => {
     const api = window.electronAPI;
@@ -459,11 +447,12 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     if (!rootPath || !isIosProject) return;
     void refreshDeviceState();
     void refreshDeviceStateWithFallback();
+    void refreshSchemes();
     const interval = setInterval(() => {
       void refreshDeviceState({ silent: true });
     }, 8000);
     return () => clearInterval(interval);
-  }, [isIosProject, refreshDeviceState, refreshDeviceStateWithFallback, rootPath]);
+  }, [isIosProject, refreshDeviceState, refreshDeviceStateWithFallback, refreshSchemes, rootPath]);
 
   const resetActionState = () => {
     setIsBusy(false);
@@ -515,6 +504,9 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       return;
     }
     if (!resolvedScheme) {
+      if (schemeStatus === 'idle') {
+        void refreshSchemes();
+      }
       toast({
         title: 'Select a scheme',
         description: 'Choose a scheme to build and run.',
@@ -592,135 +584,120 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     >
       <div className="flex min-w-0 flex-1 items-center">
         <div className="flex min-w-0 flex-1 items-center overflow-hidden rounded-md border border-border/70 bg-background/70">
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-7 rounded-none rounded-l-md px-3 text-xs"
-            title={actionTitle}
-            onMouseEnter={() => setIsActionHovered(true)}
-            onMouseLeave={() => setIsActionHovered(false)}
-            onClick={handleRun}
-            disabled={isBusy ? false : !canRun}
-          >
-            {showActionSpinner && !isCancelMode ? (
+          {isInitialLoading ? (
+            <div className="flex h-7 flex-1 items-center px-3 text-xs text-muted-foreground">
               <Spinner size="sm" className="mr-1.5 h-3.5 w-3.5" />
-            ) : null}
-            {!showActionSpinner || isCancelMode ? (
-              <ActionVisualIcon className="mr-1.5 h-3.5 w-3.5" />
-            ) : null}
-            <span>{actionText}</span>
-            <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {actionChipLabel}
-            </span>
-          </Button>
-          <div className="h-6 w-px bg-border/70" />
-          {showSchemeSelect ? (
+              <span>Loading</span>
+              <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {actionChipLabel}
+              </span>
+            </div>
+          ) : (
             <>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-7 rounded-none rounded-l-md px-3 text-xs"
+                title={actionTitle}
+                onMouseEnter={() => setIsActionHovered(true)}
+                onMouseLeave={() => setIsActionHovered(false)}
+                onClick={handleRun}
+                disabled={isBusy ? false : !canRun}
+              >
+                {showActionSpinner && !isCancelMode ? (
+                  <Spinner size="sm" className="mr-1.5 h-3.5 w-3.5" />
+                ) : null}
+                {!showActionSpinner || isCancelMode ? (
+                  <ActionVisualIcon className="mr-1.5 h-3.5 w-3.5" />
+                ) : null}
+                <span>{actionText}</span>
+                <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {actionChipLabel}
+                </span>
+              </Button>
+              <div className="h-6 w-px bg-border/70" />
+              {showSchemeSelect ? (
+                <>
+                  <Select
+                    value={resolvedScheme ?? undefined}
+                    onValueChange={(value) => {
+                      setSelectedScheme(value);
+                      setHasUserSelectedScheme(true);
+                      storeScheme(value);
+                    }}
+                    onOpenChange={(open) => {
+                      if (open && schemeStatus === 'idle') {
+                        void refreshSchemes();
+                      }
+                    }}
+                    disabled={isBusy || isDetecting}
+                  >
+                    <SelectTrigger
+                      aria-label="Xcode scheme"
+                      className="h-7 w-[150px] shrink-0 rounded-none border-none bg-transparent px-2 text-xs shadow-none"
+                    >
+                      <SelectValue placeholder={schemePlaceholder} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
+                          Scheme
+                        </div>
+                        {schemes.map((scheme) => (
+                          <SelectItem key={scheme} value={scheme} className="text-xs">
+                            {scheme}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <div className="h-6 w-px bg-border/70" />
+                </>
+              ) : null}
               <Select
-                value={resolvedScheme ?? undefined}
+                value={targetId ?? undefined}
                 onValueChange={(value) => {
-                  setSelectedScheme(value);
-                  setHasUserSelectedScheme(true);
-                  storeScheme(value);
+                  setTargetId(value);
+                  setHasUserSelected(true);
                 }}
-                disabled={
-                  isBusy || isDetecting || schemeStatus === 'loading' || schemes.length === 0
-                }
+                disabled={isBusy || isDetecting || devicesStatus !== 'ready'}
               >
                 <SelectTrigger
-                  aria-label="Xcode scheme"
-                  className="h-7 w-[150px] shrink-0 rounded-none border-none bg-transparent px-2 text-xs shadow-none"
+                  aria-label="Simulator"
+                  className="h-7 min-w-[180px] max-w-[260px] flex-1 rounded-none border-none bg-transparent px-2 text-xs shadow-none"
                 >
-                  <SelectValue placeholder={schemePlaceholder} />
+                  <SelectValue placeholder={devicePlaceholder} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                      Scheme
+                      Running
                     </div>
-                    {schemes.map((scheme) => (
-                      <SelectItem key={scheme} value={scheme} className="text-xs">
-                        {scheme}
+                    {runningSimulators.length === 0 ? (
+                      <SelectItem value="running:none" disabled className="text-xs">
+                        No running simulators
+                      </SelectItem>
+                    ) : null}
+                    {runningSimulators.map((device) => (
+                      <SelectItem key={`running:${device.udid}`} value={`running::${device.udid}`}>
+                        {device.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
+                      New
+                    </div>
+                    {newSimulators.map((device) => (
+                      <SelectItem key={`new:${device.udid}`} value={`new::${device.udid}`}>
+                        {device.name}
                       </SelectItem>
                     ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              <div className="h-6 w-px bg-border/70" />
             </>
-          ) : null}
-          <Select
-            value={targetId ?? undefined}
-            onValueChange={(value) => {
-              setTargetId(value);
-              setHasUserSelected(true);
-            }}
-            disabled={
-              isBusy || isDetecting || devicesStatus === 'loading' || bootedStatus === 'loading'
-            }
-          >
-            <SelectTrigger
-              aria-label="Simulator device"
-              className="h-7 min-w-0 flex-1 rounded-none rounded-r-md border-none bg-transparent px-2 text-xs shadow-none"
-            >
-              <SelectValue placeholder={devicePlaceholder} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                  Running
-                </div>
-                {bootedStatus === 'loading' ? (
-                  <SelectItem value="running::loading" disabled className="text-xs">
-                    Loading running simulators...
-                  </SelectItem>
-                ) : bootedStatus === 'error' ? (
-                  <SelectItem value="running::error" disabled className="text-xs">
-                    Unable to load running simulators
-                  </SelectItem>
-                ) : runningSimulators.length > 0 ? (
-                  runningSimulators.map((device) => (
-                    <SelectItem
-                      key={device.udid}
-                      value={`running::${device.udid}`}
-                      className="text-xs"
-                    >
-                      {formatDeviceLabel(device)}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <SelectItem value="running::none" disabled className="text-xs">
-                    No running simulators
-                  </SelectItem>
-                )}
-              </SelectGroup>
-              <SelectSeparator />
-              <SelectGroup>
-                <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                  New
-                </div>
-                {devicesStatus === 'loading' ? (
-                  <SelectItem value="new::loading" disabled className="text-xs">
-                    Loading devices...
-                  </SelectItem>
-                ) : devicesStatus === 'error' ? (
-                  <SelectItem value="new::error" disabled className="text-xs">
-                    Unable to load devices
-                  </SelectItem>
-                ) : newSimulators.length > 0 ? (
-                  newSimulators.map((device) => (
-                    <SelectItem key={device.udid} value={`new::${device.udid}`} className="text-xs">
-                      {formatDeviceLabel(device)}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <SelectItem value="new::none" disabled className="text-xs">
-                    No available devices
-                  </SelectItem>
-                )}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+          )}
         </div>
       </div>
     </div>

@@ -95,7 +95,8 @@ const BOOT_WAIT_MS = 10000;
 const BOOT_POLL_INTERVAL_MS = 500;
 const CANCELLED_MESSAGE = 'Cancelled';
 const SCHEME_CACHE_TTL_MS = 10 * 60 * 1000;
-const SIM_LIST_CACHE_TTL_MS = 1500;
+const SIM_LIST_CACHE_TTL_MS = 800;
+const CONTAINER_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const IOS_PBXPROJ_HINTS = [
   'SDKROOT = iphoneos',
@@ -134,6 +135,7 @@ let activeCommand: ActiveCommand | null = null;
 let activeTaskId: number | null = null;
 let cancelRequested = false;
 let lastSimList: { timestamp: number; result: SimListResult } | null = null;
+const containerCache = new Map<string, { timestamp: number; result: XcodeContainer | null }>();
 const schemeCache = new Map<
   string,
   {
@@ -366,6 +368,22 @@ const waitForSimulatorBoot = async (udid: string) => {
   return false;
 };
 
+const startSimulatorBoot = async (udid: string, taskId?: number) => {
+  const bootRes = await runCommand('xcrun', ['simctl', 'boot', udid], { taskId });
+  if (bootRes.ok) return { ok: true };
+  if (bootRes.cancelled) {
+    return { ok: false, cancelled: true, error: CANCELLED_MESSAGE };
+  }
+  const bootMessage = `${bootRes.stdout}\n${bootRes.stderr}`;
+  const bootedError =
+    bootMessage.includes('Unable to boot device in current state') &&
+    bootMessage.includes('Booted');
+  if (bootedError) {
+    return { ok: true };
+  }
+  return { ok: false, error: bootRes.stderr || bootRes.error || 'Failed to boot simulator.' };
+};
+
 const extractJson = (stdout: string, stderr: string) => {
   const candidates = [stdout, stderr, [stdout, stderr].filter(Boolean).join('\n')];
   for (const candidate of candidates) {
@@ -515,8 +533,14 @@ const pickBestContainer = (
 };
 
 const findXcodeContainer = async (projectPath: string): Promise<XcodeContainer | null> => {
+  const cached = containerCache.get(projectPath);
+  if (cached && Date.now() - cached.timestamp < CONTAINER_CACHE_TTL_MS) {
+    return cached.result;
+  }
   const candidates = await scanForXcodeContainers(projectPath, MAX_XCODE_SCAN_DEPTH);
-  return pickBestContainer(candidates, projectPath);
+  const result = pickBestContainer(candidates, projectPath);
+  containerCache.set(projectPath, { timestamp: Date.now(), result });
+  return result;
 };
 
 const parseWorkspaceProjects = async (workspacePath: string): Promise<string[]> => {
@@ -605,6 +629,40 @@ const pickDefaultScheme = (
   return null;
 };
 
+const readXcodeSchemesFromFilesystem = async (container: XcodeContainer) => {
+  const basePath = container.path;
+  const sharedPath = join(basePath, 'xcshareddata', 'xcschemes');
+  const userRoot = join(basePath, 'xcuserdata');
+  const schemes = new Set<string>();
+
+  try {
+    const sharedEntries = await fs.readdir(sharedPath, { withFileTypes: true });
+    for (const entry of sharedEntries) {
+      if (!entry.isDirectory() && entry.name.endsWith('.xcscheme')) {
+        schemes.add(entry.name.replace(/\.xcscheme$/i, ''));
+      }
+    }
+  } catch {}
+
+  try {
+    const userEntries = await fs.readdir(userRoot, { withFileTypes: true });
+    for (const entry of userEntries) {
+      if (!entry.isDirectory()) continue;
+      const userSchemesPath = join(userRoot, entry.name, 'xcschemes');
+      try {
+        const userSchemes = await fs.readdir(userSchemesPath, { withFileTypes: true });
+        for (const schemeEntry of userSchemes) {
+          if (!schemeEntry.isDirectory() && schemeEntry.name.endsWith('.xcscheme')) {
+            schemes.add(schemeEntry.name.replace(/\.xcscheme$/i, ''));
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+
+  return Array.from(schemes);
+};
+
 const getXcodeSchemeList = async (
   projectPath: string,
   container?: XcodeContainer
@@ -626,6 +684,23 @@ const getXcodeSchemeList = async (
   const cached = schemeCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < SCHEME_CACHE_TTL_MS) {
     return cached.result;
+  }
+
+  const cachedContainer = containerCache.get(projectPath);
+  if (!cachedContainer || cachedContainer.result?.path !== resolved.path) {
+    containerCache.set(projectPath, { timestamp: Date.now(), result: resolved });
+  }
+
+  const fsSchemes = await readXcodeSchemesFromFilesystem(resolved);
+  if (fsSchemes.length > 0) {
+    const result = {
+      ok: true,
+      schemes: fsSchemes.sort((a, b) => a.localeCompare(b)),
+      listJson: null,
+      container: resolved,
+    };
+    schemeCache.set(cacheKey, { timestamp: Date.now(), result });
+    return result;
   }
 
   const listArgs = [
@@ -719,12 +794,11 @@ export async function listXcodeSchemes(projectPath: string): Promise<SchemeListR
     return { ok: false, error: listRes.error, stage: listRes.stage };
   }
 
-  const defaultScheme = pickDefaultScheme(
-    listRes.schemes,
-    listRes.listJson,
-    listRes.container,
-    projectPath
-  );
+  const defaultScheme = listRes.listJson
+    ? pickDefaultScheme(listRes.schemes, listRes.listJson, listRes.container, projectPath)
+    : listRes.schemes.length === 1
+      ? listRes.schemes[0]
+      : null;
 
   return {
     ok: true,
@@ -1035,12 +1109,12 @@ export async function buildAndRunIosApp(
       }
 
       container = listRes.container;
-      const defaultScheme = pickDefaultScheme(
-        listRes.schemes,
-        listRes.listJson,
-        listRes.container,
-        projectPath
-      );
+      const listSchemes = listRes.listJson ? listRes.schemes : undefined;
+      const defaultScheme = listSchemes
+        ? pickDefaultScheme(listSchemes, listRes.listJson, listRes.container, projectPath)
+        : listRes.schemes?.length === 1
+          ? listRes.schemes[0]
+          : null;
       selectedScheme = defaultScheme || (listRes.schemes.length === 1 ? listRes.schemes[0] : null);
 
       if (!selectedScheme) {
@@ -1108,6 +1182,10 @@ export async function buildAndRunIosApp(
       'COMPILER_INDEX_STORE_ENABLE=NO',
       'build',
     ];
+
+    const bootStart = Date.now();
+    const bootPromise = startSimulatorBoot(udid, taskId);
+
     const buildStart = Date.now();
     const buildRes = await runCommand('xcodebuild', buildArgs, { cwd: projectPath, taskId });
     timings.build = Date.now() - buildStart;
@@ -1141,6 +1219,27 @@ export async function buildAndRunIosApp(
     if (!appPath) {
       logTimings('build-run', timings);
       return await fail({ stage: 'app', error: 'Unable to locate built app.' });
+    }
+
+    const bootRes = await bootPromise;
+    timings.boot = Date.now() - bootStart;
+    if (!bootRes.ok) {
+      logTimings('build-run', timings);
+      return await fail({
+        stage: bootRes.cancelled ? 'cancelled' : 'boot',
+        error: bootRes.cancelled ? CANCELLED_MESSAGE : bootRes.error || 'Failed to boot simulator.',
+      });
+    }
+
+    const waitStart = Date.now();
+    const ready = await waitForSimulatorBoot(udid);
+    timings.bootstatus = Date.now() - waitStart;
+    if (!ready) {
+      logTimings('build-run', timings);
+      return await fail({
+        stage: cancelRequested ? 'cancelled' : 'bootstatus',
+        error: cancelRequested ? CANCELLED_MESSAGE : 'Simulator boot timed out.',
+      });
     }
 
     if (cancelRequested) {

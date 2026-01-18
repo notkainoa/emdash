@@ -623,6 +623,17 @@ export class GitHubService {
       // First check if gh CLI is authenticated system-wide
       const isGHAuth = await this.isGHCLIAuthenticated();
       if (isGHAuth) {
+        const stored = await this.getStoredToken();
+        if (!stored) {
+          const token = await this.getGhCliToken();
+          if (token) {
+            try {
+              await this.storeToken(token);
+            } catch {
+              // Ignore storage failures; gh CLI auth is still valid.
+            }
+          }
+        }
         return true;
       }
 
@@ -654,6 +665,16 @@ export class GitHubService {
     } catch (error) {
       // Not authenticated or gh CLI not installed
       return false;
+    }
+  }
+
+  private async getGhCliToken(): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync('gh auth token');
+      const token = String(stdout || '').trim();
+      return token || null;
+    } catch (error) {
+      return null;
     }
   }
 
