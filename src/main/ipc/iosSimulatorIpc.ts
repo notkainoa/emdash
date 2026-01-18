@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import {
   buildAndRunIosApp,
+  cancelIosSimulatorTask,
   detectIosProject,
   getBootedSimulators,
   launchSimulator,
@@ -51,4 +52,9 @@ export function registerIosSimulatorIpc() {
       return buildAndRunIosApp(projectPath, udid, scheme);
     }
   );
+
+  ipcMain.handle('ios:simulator:cancel', async () => {
+    const cancelled = cancelIosSimulatorTask();
+    return { ok: true, cancelled };
+  });
 }

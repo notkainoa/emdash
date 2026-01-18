@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import { basename, join } from 'path';
 import os from 'os';
@@ -9,6 +9,7 @@ type CommandResult = {
   stderr: string;
   exitCode: number | null;
   error?: string;
+  cancelled?: boolean;
 };
 
 type SimRuntime = {
@@ -88,10 +89,13 @@ type XcodeCandidate = XcodeContainer & { depth: number };
 
 const OUTPUT_LIMIT = 1024 * 1024;
 const MAX_PBXPROJ_READ = 512 * 1024;
-const MAX_XCODE_SCAN_DEPTH = 6;
+const MAX_XCODE_SCAN_DEPTH = 3;
 const MAX_FAILURE_RUNS = 3;
 const BOOT_WAIT_MS = 10000;
 const BOOT_POLL_INTERVAL_MS = 500;
+const CANCELLED_MESSAGE = 'Cancelled';
+const SCHEME_CACHE_TTL_MS = 10 * 60 * 1000;
+const SIM_LIST_CACHE_TTL_MS = 1500;
 
 const IOS_PBXPROJ_HINTS = [
   'SDKROOT = iphoneos',
@@ -120,20 +124,72 @@ const XCODE_SCAN_IGNORES = new Set([
   'Carthage',
 ]);
 
+type ActiveCommand = {
+  child: ChildProcess;
+  cancelled: boolean;
+  taskId: number;
+};
+
+let activeCommand: ActiveCommand | null = null;
+let activeTaskId: number | null = null;
+let cancelRequested = false;
+let lastSimList: { timestamp: number; result: SimListResult } | null = null;
+const schemeCache = new Map<
+  string,
+  {
+    timestamp: number;
+    result: {
+      ok: boolean;
+      schemes?: string[];
+      listJson?: any;
+      container?: XcodeContainer;
+      error?: string;
+    };
+  }
+>();
+
+const startIosSimulatorTask = () => {
+  cancelRequested = false;
+  activeTaskId = Date.now() + Math.random();
+  return activeTaskId;
+};
+
+const finishIosSimulatorTask = (taskId: number) => {
+  if (activeTaskId !== taskId) return;
+  activeTaskId = null;
+  cancelRequested = false;
+};
+
 const runCommand = (
   command: string,
   args: string[],
-  opts?: { cwd?: string; timeoutMs?: number }
+  opts?: { cwd?: string; timeoutMs?: number; taskId?: number }
 ): Promise<CommandResult> =>
   new Promise((resolve) => {
     try {
+      const taskId = opts?.taskId;
+      const shouldTrack = Boolean(taskId && taskId === activeTaskId);
+      if (shouldTrack && cancelRequested) {
+        resolve({
+          ok: false,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error: CANCELLED_MESSAGE,
+          cancelled: true,
+        });
+        return;
+      }
       const child = spawn(command, args, { cwd: opts?.cwd });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      const record: ActiveCommand = { child, cancelled: false, taskId: taskId ?? -1 };
+      if (shouldTrack) activeCommand = record;
       const timeout = opts?.timeoutMs
         ? setTimeout(() => {
             timedOut = true;
+            record.cancelled = true;
             child.kill();
           }, opts.timeoutMs)
         : null;
@@ -153,26 +209,34 @@ const runCommand = (
 
       child.on('error', (error) => {
         if (timeout) clearTimeout(timeout);
+        if (activeCommand === record) activeCommand = null;
         resolve({
           ok: false,
           stdout,
           stderr,
           exitCode: null,
           error: error instanceof Error ? error.message : String(error),
+          cancelled: record.cancelled,
         });
       });
 
       child.on('close', (code) => {
         if (timeout) clearTimeout(timeout);
+        if (activeCommand === record) activeCommand = null;
+        if (shouldTrack && cancelRequested) {
+          record.cancelled = true;
+        }
         resolve({
-          ok: !timedOut && code === 0,
+          ok: !timedOut && !record.cancelled && code === 0,
           stdout,
           stderr,
           exitCode: code ?? null,
-          error: timedOut ? 'Command timeout' : undefined,
+          error: timedOut ? 'Command timeout' : record.cancelled ? CANCELLED_MESSAGE : undefined,
+          cancelled: record.cancelled,
         });
       });
     } catch (error) {
+      if (activeCommand?.child) activeCommand = null;
       resolve({
         ok: false,
         stdout: '',
@@ -186,6 +250,18 @@ const runCommand = (
 const formatDuration = (durationMs: number) => {
   if (durationMs < 1000) return `${durationMs}ms`;
   return `${(durationMs / 1000).toFixed(1)}s`;
+};
+
+export const cancelIosSimulatorTask = () => {
+  cancelRequested = true;
+  if (activeCommand?.child) {
+    activeCommand.cancelled = true;
+    try {
+      activeCommand.child.kill();
+    } catch {}
+    return true;
+  }
+  return activeTaskId !== null;
 };
 
 const logTimings = (label: string, timings: Record<string, number>) => {
@@ -282,6 +358,7 @@ const isSimulatorBooted = async (udid: string) => {
 const waitForSimulatorBoot = async (udid: string) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < BOOT_WAIT_MS) {
+    if (cancelRequested) return false;
     const device = await getSimulatorDevice(udid);
     if (device?.state === 'Booted') return true;
     await sleep(BOOT_POLL_INTERVAL_MS);
@@ -545,32 +622,46 @@ const getXcodeSchemeList = async (
     return { ok: false, error: 'No Xcode workspace or project found.', stage: 'container' };
   }
 
+  const cacheKey = `${resolved.type}:${resolved.path}`;
+  const cached = schemeCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < SCHEME_CACHE_TTL_MS) {
+    return cached.result;
+  }
+
   const listArgs = [
     '-list',
     '-json',
     resolved.type === 'workspace' ? '-workspace' : '-project',
     resolved.path,
   ];
-  const listRes = await runCommand('xcodebuild', listArgs, { cwd: projectPath });
+  const listRes = await runCommand('xcodebuild', listArgs, {
+    cwd: projectPath,
+    timeoutMs: 10000,
+  });
   if (!listRes.ok) {
-    return {
+    const result = {
       ok: false,
       error: listRes.stderr || listRes.error || 'Failed to list Xcode schemes.',
       stage: 'schemes',
       details: { stdout: listRes.stdout, stderr: listRes.stderr },
     };
+    return result;
   }
 
   const listJson = extractJson(listRes.stdout, listRes.stderr);
   if (!listJson) {
-    return { ok: false, error: 'Unable to parse Xcode schemes.', stage: 'schemes' };
+    const result = { ok: false, error: 'Unable to parse Xcode schemes.', stage: 'schemes' };
+    return result;
   }
   const schemes = resolveSchemes(listJson);
   if (schemes.length === 0) {
-    return { ok: false, error: 'No schemes found for this project.', stage: 'schemes' };
+    const result = { ok: false, error: 'No schemes found for this project.', stage: 'schemes' };
+    return result;
   }
 
-  return { ok: true, schemes, listJson, container: resolved };
+  const result = { ok: true, schemes, listJson, container: resolved };
+  schemeCache.set(cacheKey, { timestamp: Date.now(), result });
+  return result;
 };
 
 export async function detectIosProject(projectPath: string): Promise<IosDetectResult> {
@@ -599,18 +690,7 @@ export async function detectIosProject(projectPath: string): Promise<IosDetectRe
     return { ok: false, error: 'No Xcode workspace or project found.', stage: 'container' };
   }
 
-  let isIosProject = true;
-  if (container.type === 'project') {
-    const pbxprojPath = join(container.path, 'project.pbxproj');
-    isIosProject = await fileHasIosHints(pbxprojPath);
-  } else {
-    const workspaceCheck = await workspaceHasIosHints(container.path);
-    if (workspaceCheck !== null) {
-      isIosProject = workspaceCheck;
-    }
-  }
-
-  return { ok: true, isIosProject, container };
+  return { ok: true, isIosProject: true, container };
 }
 
 export async function listXcodeSchemes(projectPath: string): Promise<SchemeListResult> {
@@ -658,26 +738,37 @@ export async function listIosSimulators(): Promise<SimListResult> {
   if (process.platform !== 'darwin') {
     return { ok: false, error: 'iOS Simulator is only available on macOS.', stage: 'platform' };
   }
+
+  if (lastSimList && Date.now() - lastSimList.timestamp < SIM_LIST_CACHE_TTL_MS) {
+    return lastSimList.result;
+  }
+
   const res = await runCommand('xcrun', ['simctl', 'list', '-j']);
   if (!res.ok) {
-    return {
+    const result = {
       ok: false,
       error: res.stderr || res.error || 'Failed to list simulators.',
-      stage: 'simctl',
+      stage: res.cancelled ? 'cancelled' : 'simctl',
     };
+    lastSimList = { timestamp: Date.now(), result };
+    return result;
   }
   try {
     const parsed = extractJson(res.stdout, res.stderr);
     const devices = parseSimctlList(parsed ?? res.stdout);
     const sorted = devices.sort((a, b) => scoreDevice(b) - scoreDevice(a));
     const bestUdid = sorted[0]?.udid || null;
-    return { ok: true, devices: sorted, bestUdid };
+    const result = { ok: true, devices: sorted, bestUdid };
+    lastSimList = { timestamp: Date.now(), result };
+    return result;
   } catch (error) {
-    return {
+    const result = {
       ok: false,
       error: error instanceof Error ? error.message : 'Failed to parse simulator list.',
       stage: 'parse',
     };
+    lastSimList = { timestamp: Date.now(), result };
+    return result;
   }
 }
 
@@ -698,51 +789,66 @@ export async function launchSimulator(udid: string): Promise<SimLaunchResult> {
   }
   if (!udid) return { ok: false, error: 'Simulator UDID is required.', stage: 'validation' };
 
+  const taskId = startIosSimulatorTask();
   const timings: Record<string, number> = {};
-  const alreadyBooted = await isSimulatorBooted(udid);
+  try {
+    const alreadyBooted = await isSimulatorBooted(udid);
 
-  if (!alreadyBooted) {
-    const bootStart = Date.now();
-    const bootRes = await runCommand('xcrun', ['simctl', 'boot', udid]);
-    timings.boot = Date.now() - bootStart;
-    if (!bootRes.ok) {
-      const bootMessage = `${bootRes.stdout}\n${bootRes.stderr}`;
-      const bootedError =
-        bootMessage.includes('Unable to boot device in current state') &&
-        bootMessage.includes('Booted');
-      if (!bootedError) {
+    if (!alreadyBooted) {
+      const bootStart = Date.now();
+      const bootRes = await runCommand('xcrun', ['simctl', 'boot', udid], { taskId });
+      timings.boot = Date.now() - bootStart;
+      if (!bootRes.ok) {
+        if (bootRes.cancelled) {
+          logTimings('launch', timings);
+          return { ok: false, error: CANCELLED_MESSAGE, stage: 'cancelled' };
+        }
+        const bootMessage = `${bootRes.stdout}\n${bootRes.stderr}`;
+        const bootedError =
+          bootMessage.includes('Unable to boot device in current state') &&
+          bootMessage.includes('Booted');
+        if (!bootedError) {
+          logTimings('launch', timings);
+          return { ok: false, error: bootRes.stderr || bootRes.error, stage: 'boot' };
+        }
+      }
+
+      const waitStart = Date.now();
+      const ready = await waitForSimulatorBoot(udid);
+      timings.bootstatus = Date.now() - waitStart;
+      if (!ready) {
         logTimings('launch', timings);
-        return { ok: false, error: bootRes.stderr || bootRes.error, stage: 'boot' };
+        return {
+          ok: false,
+          error: cancelRequested ? CANCELLED_MESSAGE : 'Simulator boot timed out.',
+          stage: cancelRequested ? 'cancelled' : 'bootstatus',
+        };
       }
     }
 
-    const waitStart = Date.now();
-    const ready = await waitForSimulatorBoot(udid);
-    timings.bootstatus = Date.now() - waitStart;
-    if (!ready) {
-      logTimings('launch', timings);
-      return { ok: false, error: 'Simulator boot timed out.', stage: 'bootstatus' };
+    if (!alreadyBooted) {
+      const openStart = Date.now();
+      const openRes = await runCommand(
+        'open',
+        ['-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid],
+        { taskId }
+      );
+      timings.open = Date.now() - openStart;
+      if (!openRes.ok) {
+        logTimings('launch', timings);
+        return {
+          ok: false,
+          error: openRes.cancelled ? CANCELLED_MESSAGE : openRes.stderr || openRes.error,
+          stage: openRes.cancelled ? 'cancelled' : 'open',
+        };
+      }
     }
-  }
 
-  if (!alreadyBooted) {
-    const openStart = Date.now();
-    const openRes = await runCommand('open', [
-      '-a',
-      'Simulator',
-      '--args',
-      '-CurrentDeviceUDID',
-      udid,
-    ]);
-    timings.open = Date.now() - openStart;
-    if (!openRes.ok) {
-      logTimings('launch', timings);
-      return { ok: false, error: openRes.stderr || openRes.error, stage: 'open' };
-    }
+    logTimings('launch', timings);
+    return { ok: true };
+  } finally {
+    finishIosSimulatorTask(taskId);
   }
-
-  logTimings('launch', timings);
-  return { ok: true };
 }
 
 const findBuiltApp = async (derivedDataPath: string, scheme: string): Promise<string | null> => {
@@ -892,12 +998,14 @@ export async function buildAndRunIosApp(
     };
   }
 
+  const taskId = startIosSimulatorTask();
   try {
     const stats = await fs.stat(projectPath);
     if (!stats.isDirectory()) {
       return { ok: false, error: 'Project path is not a directory.', stage: 'validation' };
     }
   } catch (error) {
+    finishIosSimulatorTask(taskId);
     return {
       ok: false,
       error: error instanceof Error ? error.message : 'Invalid project path.',
@@ -905,207 +1013,234 @@ export async function buildAndRunIosApp(
     };
   }
 
-  const requestedScheme = String(scheme ?? '').trim();
-  let container: XcodeContainer | null = null;
-  let selectedScheme: string | null = requestedScheme || null;
+  try {
+    const requestedScheme = String(scheme ?? '').trim();
+    let container: XcodeContainer | null = null;
+    let selectedScheme: string | null = requestedScheme || null;
 
-  if (requestedScheme) {
-    container = await findXcodeContainer(projectPath);
-    if (!container) {
-      return { ok: false, error: 'No Xcode workspace or project found.', stage: 'container' };
+    if (requestedScheme) {
+      container = await findXcodeContainer(projectPath);
+      if (!container) {
+        return { ok: false, error: 'No Xcode workspace or project found.', stage: 'container' };
+      }
+    } else {
+      const listRes = await getXcodeSchemeList(projectPath);
+      if (!listRes.ok || !listRes.schemes || !listRes.container) {
+        return {
+          ok: false,
+          error: listRes.error || 'Failed to resolve Xcode schemes.',
+          stage: listRes.stage,
+          details: listRes.details,
+        };
+      }
+
+      container = listRes.container;
+      const defaultScheme = pickDefaultScheme(
+        listRes.schemes,
+        listRes.listJson,
+        listRes.container,
+        projectPath
+      );
+      selectedScheme = defaultScheme || (listRes.schemes.length === 1 ? listRes.schemes[0] : null);
+
+      if (!selectedScheme) {
+        return { ok: false, error: 'Select a scheme to build and run.', stage: 'schemes' };
+      }
     }
-  } else {
-    const listRes = await getXcodeSchemeList(projectPath);
-    if (!listRes.ok || !listRes.schemes || !listRes.container) {
+
+    const { baseDir, derivedDataDir } = buildDerivedDataPaths(projectPath);
+    const { runDir, runId } = buildDerivedDataRunDir(baseDir);
+    const derivedDataReady = await ensureDirectory(derivedDataDir);
+    const runDirReady = await ensureDirectory(runDir);
+    if (!derivedDataReady || !runDirReady) {
       return {
         ok: false,
-        error: listRes.error || 'Failed to resolve Xcode schemes.',
-        stage: listRes.stage,
-        details: listRes.details,
+        error: 'Failed to prepare build directory.',
+        stage: 'build',
       };
     }
 
-    container = listRes.container;
-    const defaultScheme = pickDefaultScheme(
-      listRes.schemes,
-      listRes.listJson,
-      listRes.container,
-      projectPath
-    );
-    selectedScheme = defaultScheme || (listRes.schemes.length === 1 ? listRes.schemes[0] : null);
+    const fail = async (args: {
+      stage: string;
+      error: string;
+      details?: { stdout?: string; stderr?: string };
+      appPath?: string;
+    }): Promise<BuildRunResult> => {
+      const failurePath = await moveRunToFailures(baseDir, runDir, runId);
+      return {
+        ok: false,
+        stage: args.stage,
+        error: args.error,
+        details: args.details,
+        scheme: selectedScheme ?? undefined,
+        derivedDataPath: failurePath,
+        appPath: args.appPath,
+      };
+    };
 
-    if (!selectedScheme) {
-      return { ok: false, error: 'Select a scheme to build and run.', stage: 'schemes' };
+    if (!container || !selectedScheme) {
+      return {
+        ok: false,
+        error: 'Unable to resolve build settings.',
+        stage: 'build',
+      };
     }
-  }
 
-  const { baseDir, derivedDataDir } = buildDerivedDataPaths(projectPath);
-  const { runDir, runId } = buildDerivedDataRunDir(baseDir);
-  const derivedDataReady = await ensureDirectory(derivedDataDir);
-  const runDirReady = await ensureDirectory(runDir);
-  if (!derivedDataReady || !runDirReady) {
-    return {
-      ok: false,
-      error: 'Failed to prepare build directory.',
-      stage: 'build',
-    };
-  }
+    if (cancelRequested) {
+      return { ok: false, error: CANCELLED_MESSAGE, stage: 'cancelled' };
+    }
 
-  const fail = async (args: {
-    stage: string;
-    error: string;
-    details?: { stdout?: string; stderr?: string };
-    appPath?: string;
-  }): Promise<BuildRunResult> => {
-    const failurePath = await moveRunToFailures(baseDir, runDir, runId);
-    return {
-      ok: false,
-      stage: args.stage,
-      error: args.error,
-      details: args.details,
-      scheme: selectedScheme ?? undefined,
-      derivedDataPath: failurePath,
-      appPath: args.appPath,
-    };
-  };
+    const timings: Record<string, number> = {};
 
-  if (!container || !selectedScheme) {
-    return {
-      ok: false,
-      error: 'Unable to resolve build settings.',
-      stage: 'build',
-    };
-  }
-
-  const timings: Record<string, number> = {};
-
-  const buildArgs = [
-    container.type === 'workspace' ? '-workspace' : '-project',
-    container.path,
-    '-scheme',
-    selectedScheme,
-    '-configuration',
-    'Debug',
-    '-destination',
-    `platform=iOS Simulator,id=${udid}`,
-    '-derivedDataPath',
-    derivedDataDir,
-    'CODE_SIGNING_ALLOWED=NO',
-    'CODE_SIGNING_REQUIRED=NO',
-    'COMPILER_INDEX_STORE_ENABLE=NO',
-    'build',
-  ];
-  const buildStart = Date.now();
-  const buildRes = await runCommand('xcodebuild', buildArgs, { cwd: projectPath });
-  timings.build = Date.now() - buildStart;
-  if (!buildRes.ok) {
-    logTimings('build-run', timings);
-    return await fail({
-      stage: 'build',
-      error: buildRes.stderr || buildRes.error || 'Build failed.',
-      details: { stdout: buildRes.stdout, stderr: buildRes.stderr },
-    });
-  }
-
-  if (buildRes.stdout || buildRes.stderr) {
-    try {
-      const buildLogPath = join(runDir, 'xcodebuild.log');
-      await fs.writeFile(
-        buildLogPath,
-        [buildRes.stdout, buildRes.stderr].filter(Boolean).join('\n')
-      );
-    } catch {}
-  }
-
-  const appPath = await findBuiltApp(derivedDataDir, selectedScheme);
-  if (appPath) {
-    try {
-      await fs.cp(appPath, join(runDir, basename(appPath)), { recursive: true });
-    } catch {}
-  }
-  if (!appPath) {
-    logTimings('build-run', timings);
-    return await fail({ stage: 'app', error: 'Unable to locate built app.' });
-  }
-
-  const bundleId = await readBundleId(appPath);
-  if (!bundleId) {
-    logTimings('build-run', timings);
-    return await fail({
-      stage: 'bundle-id',
-      error: 'Unable to read bundle identifier.',
-      appPath,
-    });
-  }
-
-  const installStart = Date.now();
-  let didInstall = false;
-  let installedAppPath = await getInstalledAppPath(udid, bundleId);
-  const executableName = await readBundleExecutable(appPath);
-  if (!installedAppPath || !executableName) {
-    const installRes = await runCommand('xcrun', ['simctl', 'install', udid, appPath]);
-    timings.install = Date.now() - installStart;
-    if (!installRes.ok) {
+    const buildArgs = [
+      container.type === 'workspace' ? '-workspace' : '-project',
+      container.path,
+      '-scheme',
+      selectedScheme,
+      '-configuration',
+      'Debug',
+      '-destination',
+      `platform=iOS Simulator,id=${udid}`,
+      '-derivedDataPath',
+      derivedDataDir,
+      'CODE_SIGNING_ALLOWED=NO',
+      'CODE_SIGNING_REQUIRED=NO',
+      'COMPILER_INDEX_STORE_ENABLE=NO',
+      'build',
+    ];
+    const buildStart = Date.now();
+    const buildRes = await runCommand('xcodebuild', buildArgs, { cwd: projectPath, taskId });
+    timings.build = Date.now() - buildStart;
+    if (!buildRes.ok) {
       logTimings('build-run', timings);
       return await fail({
-        stage: 'install',
-        error: installRes.stderr || installRes.error || 'Failed to install app.',
+        stage: buildRes.cancelled ? 'cancelled' : 'build',
+        error: buildRes.cancelled
+          ? CANCELLED_MESSAGE
+          : buildRes.stderr || buildRes.error || 'Build failed.',
+        details: { stdout: buildRes.stdout, stderr: buildRes.stderr },
       });
     }
-    didInstall = true;
-    installedAppPath = await getInstalledAppPath(udid, bundleId);
-  }
 
-  if (!installedAppPath || !executableName) {
-    timings.install = Date.now() - installStart;
-    logTimings('build-run', timings);
-    return await fail({
-      stage: 'install',
-      error: 'Unable to resolve installed app path.',
-      appPath,
-    });
-  }
+    if (buildRes.stdout || buildRes.stderr) {
+      try {
+        const buildLogPath = join(runDir, 'xcodebuild.log');
+        await fs.writeFile(
+          buildLogPath,
+          [buildRes.stdout, buildRes.stderr].filter(Boolean).join('\n')
+        );
+      } catch {}
+    }
 
-  try {
-    const sourceBinary = join(appPath, executableName);
-    const targetBinary = join(installedAppPath, executableName);
-    await fs.copyFile(sourceBinary, targetBinary);
-  } catch {
-    if (!didInstall) {
-      const installRes = await runCommand('xcrun', ['simctl', 'install', udid, appPath]);
+    const appPath = await findBuiltApp(derivedDataDir, selectedScheme);
+    if (appPath) {
+      try {
+        await fs.cp(appPath, join(runDir, basename(appPath)), { recursive: true });
+      } catch {}
+    }
+    if (!appPath) {
+      logTimings('build-run', timings);
+      return await fail({ stage: 'app', error: 'Unable to locate built app.' });
+    }
+
+    if (cancelRequested) {
+      logTimings('build-run', timings);
+      return await fail({ stage: 'cancelled', error: CANCELLED_MESSAGE, appPath });
+    }
+
+    const bundleId = await readBundleId(appPath);
+    if (!bundleId) {
+      logTimings('build-run', timings);
+      return await fail({
+        stage: 'bundle-id',
+        error: 'Unable to read bundle identifier.',
+        appPath,
+      });
+    }
+
+    const installStart = Date.now();
+    let didInstall = false;
+    let installedAppPath = await getInstalledAppPath(udid, bundleId);
+    const executableName = await readBundleExecutable(appPath);
+    if (!installedAppPath || !executableName) {
+      const installRes = await runCommand('xcrun', ['simctl', 'install', udid, appPath], {
+        taskId,
+      });
       timings.install = Date.now() - installStart;
       if (!installRes.ok) {
         logTimings('build-run', timings);
         return await fail({
-          stage: 'install',
-          error: installRes.stderr || installRes.error || 'Failed to install app.',
+          stage: installRes.cancelled ? 'cancelled' : 'install',
+          error: installRes.cancelled
+            ? CANCELLED_MESSAGE
+            : installRes.stderr || installRes.error || 'Failed to install app.',
         });
       }
+      didInstall = true;
+      installedAppPath = await getInstalledAppPath(udid, bundleId);
     }
-  }
 
-  if (!timings.install) {
-    timings.install = Date.now() - installStart;
-  }
+    if (!installedAppPath || !executableName) {
+      timings.install = Date.now() - installStart;
+      logTimings('build-run', timings);
+      return await fail({
+        stage: 'install',
+        error: 'Unable to resolve installed app path.',
+        appPath,
+      });
+    }
 
-  const launchStart = Date.now();
-  const launchRes = await runCommand('xcrun', ['simctl', 'launch', udid, bundleId]);
-  timings.launch = Date.now() - launchStart;
-  if (!launchRes.ok) {
-    logTimings('build-run', timings);
-    return await fail({
-      stage: 'launch',
-      error: launchRes.stderr || launchRes.error || 'Failed to launch app.',
+    try {
+      const sourceBinary = join(appPath, executableName);
+      const targetBinary = join(installedAppPath, executableName);
+      await fs.copyFile(sourceBinary, targetBinary);
+    } catch {
+      if (!didInstall) {
+        const installRes = await runCommand('xcrun', ['simctl', 'install', udid, appPath], {
+          taskId,
+        });
+        timings.install = Date.now() - installStart;
+        if (!installRes.ok) {
+          logTimings('build-run', timings);
+          return await fail({
+            stage: installRes.cancelled ? 'cancelled' : 'install',
+            error: installRes.cancelled
+              ? CANCELLED_MESSAGE
+              : installRes.stderr || installRes.error || 'Failed to install app.',
+          });
+        }
+      }
+    }
+
+    if (!timings.install) {
+      timings.install = Date.now() - installStart;
+    }
+
+    const launchStart = Date.now();
+    const launchRes = await runCommand('xcrun', ['simctl', 'launch', udid, bundleId], {
+      taskId,
     });
+    timings.launch = Date.now() - launchStart;
+    if (!launchRes.ok) {
+      logTimings('build-run', timings);
+      return await fail({
+        stage: launchRes.cancelled ? 'cancelled' : 'launch',
+        error: launchRes.cancelled
+          ? CANCELLED_MESSAGE
+          : launchRes.stderr || launchRes.error || 'Failed to launch app.',
+      });
+    }
+
+    logTimings('build-run', timings);
+    await cleanupRunDir(runDir);
+
+    return {
+      ok: true,
+      scheme: selectedScheme ?? undefined,
+      bundleId,
+      appPath,
+    };
+  } finally {
+    finishIosSimulatorTask(taskId);
   }
-
-  logTimings('build-run', timings);
-  await cleanupRunDir(runDir);
-
-  return {
-    ok: true,
-    scheme: selectedScheme ?? undefined,
-    bundleId,
-    appPath,
-  };
 }

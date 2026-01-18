@@ -396,10 +396,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('ios:simulator:detect', args),
   iosSimulatorSchemes: (args: { projectPath: string }) =>
     ipcRenderer.invoke('ios:simulator:schemes', args),
-  iosSimulatorLaunch: (args: { udid: string }) =>
-    ipcRenderer.invoke('ios:simulator:launch', args),
+  iosSimulatorLaunch: (args: { udid: string }) => ipcRenderer.invoke('ios:simulator:launch', args),
   iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) =>
     ipcRenderer.invoke('ios:simulator:build-run', args),
+  iosSimulatorCancel: () => ipcRenderer.invoke('ios:simulator:cancel'),
 
   // Main-managed browser (WebContentsView)
   browserShow: (bounds: { x: number; y: number; width: number; height: number }, url?: string) =>
@@ -766,6 +766,7 @@ export interface ElectronAPI {
     appPath?: string;
     derivedDataPath?: string;
   }>;
+  iosSimulatorCancel: () => Promise<{ ok: boolean; cancelled: boolean }>;
 
   // Main-managed browser (WebContentsView)
   browserShow: (

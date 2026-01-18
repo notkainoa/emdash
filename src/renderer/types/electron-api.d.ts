@@ -627,7 +627,11 @@ declare global {
         error?: string;
         stage?: string;
       }>;
-      iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) => Promise<{
+      iosSimulatorBuildRun: (args: {
+        projectPath: string;
+        udid: string;
+        scheme?: string;
+      }) => Promise<{
         ok: boolean;
         stage?: string;
         error?: string;
@@ -637,6 +641,7 @@ declare global {
         appPath?: string;
         derivedDataPath?: string;
       }>;
+      iosSimulatorCancel: () => Promise<{ ok: boolean; cancelled: boolean }>;
       // Attachments
       saveAttachment: (args: { taskPath: string; srcPath: string; subdir?: string }) => Promise<{
         success: boolean;
