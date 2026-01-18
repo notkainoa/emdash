@@ -144,6 +144,66 @@ declare global {
         content?: string;
         error?: string;
       }>;
+      iosSimulatorList: () => Promise<{
+        ok: boolean;
+        devices?: Array<{
+          name: string;
+          udid: string;
+          state: string;
+          isAvailable: boolean;
+          runtime: { identifier: string; name: string; platform?: string; version?: string };
+          isIphone: boolean;
+          modelNumber: number;
+        }>;
+        bestUdid?: string | null;
+        error?: string;
+        stage?: string;
+      }>;
+      iosSimulatorBooted: () => Promise<{
+        ok: boolean;
+        devices?: Array<{
+          name: string;
+          udid: string;
+          state: string;
+          isAvailable: boolean;
+          runtime: { identifier: string; name: string; platform?: string; version?: string };
+          isIphone: boolean;
+          modelNumber: number;
+        }>;
+        error?: string;
+        stage?: string;
+      }>;
+      iosSimulatorDetect: (args: { projectPath: string }) => Promise<{
+        ok: boolean;
+        isIosProject?: boolean;
+        container?: { type: 'workspace' | 'project'; path: string };
+        error?: string;
+        stage?: string;
+      }>;
+      iosSimulatorSchemes: (args: { projectPath: string }) => Promise<{
+        ok: boolean;
+        schemes?: string[];
+        defaultScheme?: string | null;
+        container?: { type: 'workspace' | 'project'; path: string };
+        error?: string;
+        stage?: string;
+      }>;
+      iosSimulatorLaunch: (args: { udid: string }) => Promise<{
+        ok: boolean;
+        positioned?: boolean;
+        error?: string;
+        stage?: string;
+      }>;
+      iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) => Promise<{
+        ok: boolean;
+        stage?: string;
+        error?: string;
+        details?: { stdout?: string; stderr?: string };
+        scheme?: string;
+        bundleId?: string;
+        appPath?: string;
+        derivedDataPath?: string;
+      }>;
       githubAuth: () => Promise<{ success: boolean; token?: string; user?: any; error?: string }>;
       githubIsAuthenticated: () => Promise<boolean>;
       githubGetUser: () => Promise<any>;

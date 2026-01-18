@@ -20,6 +20,7 @@ import { registerHostPreviewIpc } from './hostPreviewIpc';
 import { registerBrowserIpc } from './browserIpc';
 import { registerNetIpc } from './netIpc';
 import { registerLineCommentsIpc } from './lineCommentsIpc';
+import { registerIosSimulatorIpc } from './iosSimulatorIpc';
 
 export function registerAllIpc() {
   // Core app/utility IPC
@@ -39,6 +40,7 @@ export function registerAllIpc() {
   registerBrowserIpc();
   registerNetIpc();
   registerLineCommentsIpc();
+  registerIosSimulatorIpc();
 
   // Existing modules
   registerPtyIpc();

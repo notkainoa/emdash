@@ -389,6 +389,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener(channel, wrapped);
   },
 
+  // iOS simulator helpers
+  iosSimulatorList: () => ipcRenderer.invoke('ios:simulator:list'),
+  iosSimulatorBooted: () => ipcRenderer.invoke('ios:simulator:booted'),
+  iosSimulatorDetect: (args: { projectPath: string }) =>
+    ipcRenderer.invoke('ios:simulator:detect', args),
+  iosSimulatorSchemes: (args: { projectPath: string }) =>
+    ipcRenderer.invoke('ios:simulator:schemes', args),
+  iosSimulatorLaunch: (args: { udid: string }) =>
+    ipcRenderer.invoke('ios:simulator:launch', args),
+  iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) =>
+    ipcRenderer.invoke('ios:simulator:build-run', args),
+
   // Main-managed browser (WebContentsView)
   browserShow: (bounds: { x: number; y: number; width: number; height: number }, url?: string) =>
     ipcRenderer.invoke('browser:view:show', { ...bounds, url }),
@@ -692,6 +704,68 @@ export interface ElectronAPI {
   onHostPreviewEvent: (
     listener: (data: { type: 'url'; taskId: string; url: string }) => void
   ) => () => void;
+
+  // iOS simulator helpers
+  iosSimulatorList: () => Promise<{
+    ok: boolean;
+    devices?: Array<{
+      name: string;
+      udid: string;
+      state: string;
+      isAvailable: boolean;
+      runtime: { identifier: string; name: string; platform?: string; version?: string };
+      isIphone: boolean;
+      modelNumber: number;
+    }>;
+    bestUdid?: string | null;
+    error?: string;
+    stage?: string;
+  }>;
+  iosSimulatorBooted: () => Promise<{
+    ok: boolean;
+    devices?: Array<{
+      name: string;
+      udid: string;
+      state: string;
+      isAvailable: boolean;
+      runtime: { identifier: string; name: string; platform?: string; version?: string };
+      isIphone: boolean;
+      modelNumber: number;
+    }>;
+    error?: string;
+    stage?: string;
+  }>;
+  iosSimulatorDetect: (args: { projectPath: string }) => Promise<{
+    ok: boolean;
+    isIosProject?: boolean;
+    container?: { type: 'workspace' | 'project'; path: string };
+    error?: string;
+    stage?: string;
+  }>;
+  iosSimulatorSchemes: (args: { projectPath: string }) => Promise<{
+    ok: boolean;
+    schemes?: string[];
+    defaultScheme?: string | null;
+    container?: { type: 'workspace' | 'project'; path: string };
+    error?: string;
+    stage?: string;
+  }>;
+  iosSimulatorLaunch: (args: { udid: string }) => Promise<{
+    ok: boolean;
+    positioned?: boolean;
+    error?: string;
+    stage?: string;
+  }>;
+  iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) => Promise<{
+    ok: boolean;
+    stage?: string;
+    error?: string;
+    details?: { stdout?: string; stderr?: string };
+    scheme?: string;
+    bundleId?: string;
+    appPath?: string;
+    derivedDataPath?: string;
+  }>;
 
   // Main-managed browser (WebContentsView)
   browserShow: (
