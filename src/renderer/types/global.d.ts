@@ -144,46 +144,9 @@ declare global {
         content?: string;
         error?: string;
       }>;
-      iosSimulatorList: () => Promise<{
-        ok: boolean;
-        devices?: Array<{
-          name: string;
-          udid: string;
-          state: string;
-          isAvailable: boolean;
-          runtime: { identifier: string; name: string; platform?: string; version?: string };
-          isIphone: boolean;
-          modelNumber: number;
-        }>;
-        bestUdid?: string | null;
-        error?: string;
-        stage?: string;
-      }>;
-      iosSimulatorBooted: () => Promise<{
-        ok: boolean;
-        devices?: Array<{
-          name: string;
-          udid: string;
-          state: string;
-          isAvailable: boolean;
-          runtime: { identifier: string; name: string; platform?: string; version?: string };
-          isIphone: boolean;
-          modelNumber: number;
-        }>;
-        error?: string;
-        stage?: string;
-      }>;
       iosSimulatorDetect: (args: { projectPath: string }) => Promise<{
         ok: boolean;
         isIosProject?: boolean;
-        container?: { type: 'workspace' | 'project'; path: string };
-        error?: string;
-        stage?: string;
-      }>;
-      iosSimulatorSchemes: (args: { projectPath: string }) => Promise<{
-        ok: boolean;
-        schemes?: string[];
-        defaultScheme?: string | null;
         container?: { type: 'workspace' | 'project'; path: string };
         error?: string;
         stage?: string;
@@ -202,13 +165,44 @@ declare global {
         ok: boolean;
         stage?: string;
         error?: string;
-        details?: { stdout?: string; stderr?: string };
+        details?: { stdout?: string; stderr?: string; logPath?: string };
         scheme?: string;
         bundleId?: string;
         appPath?: string;
         derivedDataPath?: string;
       }>;
       iosSimulatorCancel: () => Promise<{ ok: boolean; cancelled: boolean }>;
+      iosSimulatorSnapshot: (args: { projectPath: string }) => Promise<{
+        ok: boolean;
+        isIosProject?: boolean;
+        container?: { type: 'workspace' | 'project'; path: string };
+        devices?: Array<{
+          name: string;
+          udid: string;
+          state: string;
+          isAvailable: boolean;
+          runtime: { identifier: string; name: string; platform?: string; version?: string };
+          isIphone: boolean;
+          modelNumber: number;
+        }>;
+        booted?: Array<{
+          name: string;
+          udid: string;
+          state: string;
+          isAvailable: boolean;
+          runtime: { identifier: string; name: string; platform?: string; version?: string };
+          isIphone: boolean;
+          modelNumber: number;
+        }>;
+        bestUdid?: string | null;
+        schemes?: string[];
+        defaultScheme?: string | null;
+        error?: string;
+        stage?: string;
+        details?: { stdout?: string; stderr?: string; logPath?: string };
+      }>;
+      iosSimulatorPollerStart: () => Promise<{ ok: boolean }>;
+      iosSimulatorPollerStop: () => Promise<{ ok: boolean }>;
       githubAuth: () => Promise<{ success: boolean; token?: string; user?: any; error?: string }>;
       githubIsAuthenticated: () => Promise<boolean>;
       githubGetUser: () => Promise<any>;

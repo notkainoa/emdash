@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Cable, ExternalLink, Play, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, ExternalLink, Play, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/button';
 import {
@@ -7,7 +7,6 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from './ui/select';
@@ -24,16 +23,32 @@ type SimulatorDevice = {
   modelNumber: number;
 };
 
-const detectIosProject = async (rootPath: string): Promise<boolean> => {
-  try {
-    const api = window.electronAPI;
-    if (!api?.iosSimulatorDetect) return false;
-    const res = await api.iosSimulatorDetect({ projectPath: rootPath });
-    return Boolean(res.ok && res.isIosProject);
-  } catch {
-    return false;
-  }
+type SnapshotState = {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  isIosProject: boolean;
+  container?: { type: 'workspace' | 'project'; path: string } | null;
+  devices: SimulatorDevice[];
+  booted: SimulatorDevice[];
+  bestUdid: string | null;
+  schemes: string[];
+  defaultScheme: string | null;
+  error?: string | null;
+  stage?: string | null;
+  details?: { stdout?: string; stderr?: string; logPath?: string } | null;
+  lastUpdated?: number;
 };
+
+type DetectState = {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  isIosProject: boolean;
+  error?: string | null;
+  stage?: string | null;
+  lastChecked?: number;
+};
+
+const snapshotCache = new Map<string, SnapshotState>();
+const detectCache = new Map<string, DetectState>();
+const detectInFlight = new Map<string, Promise<void>>();
 
 interface IosSimulatorBarProps {
   projectPath?: string | null;
@@ -46,34 +61,33 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     () => (taskPath || projectPath || '').trim(),
     [projectPath, taskPath]
   );
-  const [isIosProject, setIsIosProject] = React.useState(false);
-  const [isDetecting, setIsDetecting] = React.useState(false);
-  const detectCacheRef = React.useRef<{ path: string; value: boolean } | null>(null);
-  const [availableDevices, setAvailableDevices] = React.useState<SimulatorDevice[]>([]);
-  const [bootedDevices, setBootedDevices] = React.useState<SimulatorDevice[]>([]);
-  const [bestUdid, setBestUdid] = React.useState<string | null>(null);
-  const [devicesStatus, setDevicesStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(
-    'idle'
+  const [snapshot, setSnapshot] = React.useState<SnapshotState>(
+    () =>
+      snapshotCache.get(rootPath || '') ?? {
+        status: 'idle',
+        isIosProject: false,
+        devices: [],
+        booted: [],
+        bestUdid: null,
+        schemes: [],
+        defaultScheme: null,
+        container: null,
+        error: null,
+        stage: null,
+        details: null,
+        lastUpdated: undefined,
+      }
   );
-  const [bootedStatus, setBootedStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(
-    'idle'
+  const [detectState, setDetectState] = React.useState<DetectState>(
+    () =>
+      detectCache.get(rootPath || '') ?? {
+        status: 'idle',
+        isIosProject: false,
+        error: null,
+        stage: null,
+        lastChecked: undefined,
+      }
   );
-  const [devicesError, setDevicesError] = React.useState<string | null>(null);
-  const [devicesStage, setDevicesStage] = React.useState<string | null>(null);
-  const [schemes, setSchemes] = React.useState<string[]>([]);
-  const schemeCacheRef = React.useRef<{
-    path: string;
-    schemes: string[];
-    defaultScheme: string | null;
-    timestamp: number;
-  } | null>(null);
-  const [defaultScheme, setDefaultScheme] = React.useState<string | null>(null);
-  const [selectedScheme, setSelectedScheme] = React.useState<string | null>(null);
-  const [hasUserSelectedScheme, setHasUserSelectedScheme] = React.useState(false);
-  const [schemeStatus, setSchemeStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(
-    'idle'
-  );
-  const [schemeError, setSchemeError] = React.useState<string | null>(null);
   const [targetId, setTargetId] = React.useState<string | null>(null);
   const [hasUserSelected, setHasUserSelected] = React.useState(false);
   const [isBusy, setIsBusy] = React.useState(false);
@@ -81,98 +95,252 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   const [actionStartedAt, setActionStartedAt] = React.useState<number | null>(null);
   const [actionNow, setActionNow] = React.useState<number | null>(null);
   const [isActionHovered, setIsActionHovered] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  const copyResetRef = React.useRef<number | null>(null);
   const { toast } = useToast();
 
   const schemeStorageKey = React.useMemo(
     () => (rootPath ? `emdash:ios-scheme:${rootPath}` : null),
     [rootPath]
   );
-  const selectedSchemeRef = React.useRef<string | null>(null);
-  const hasUserSelectedSchemeRef = React.useRef(false);
-  const lastSchemeErrorRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    selectedSchemeRef.current = selectedScheme;
-  }, [selectedScheme]);
+    return () => {
+      if (copyResetRef.current !== null) {
+        window.clearTimeout(copyResetRef.current);
+      }
+    };
+  }, []);
 
-  React.useEffect(() => {
-    hasUserSelectedSchemeRef.current = hasUserSelectedScheme;
-  }, [hasUserSelectedScheme]);
+  const updateSnapshot = React.useCallback(
+    (path: string, next: SnapshotState) => {
+      snapshotCache.set(path, next);
+      if (path === rootPath) {
+        setSnapshot(next);
+      }
+    },
+    [rootPath]
+  );
 
-  React.useEffect(() => {
-    let cancelled = false;
-    setIsDetecting(Boolean(rootPath));
-    setIsIosProject(false);
-    setDevicesStatus('idle');
-    setBootedStatus('idle');
-    setSchemes([]);
-    setDefaultScheme(null);
-    setSelectedScheme(null);
-    setHasUserSelectedScheme(false);
-    setSchemeStatus('idle');
-    setSchemeError(null);
-    setDevicesError(null);
-    setDevicesStage(null);
-    if (!rootPath) {
-      setIsDetecting(false);
-      setIsIosProject(false);
-      return () => undefined;
-    }
-    void (async () => {
-      const cached = detectCacheRef.current;
-      if (cached && cached.path === rootPath) {
-        if (!cancelled) {
-          setIsIosProject(cached.value);
-          setIsDetecting(false);
-        }
+  const updateDetectState = React.useCallback(
+    (path: string, next: DetectState) => {
+      detectCache.set(path, next);
+      if (path === rootPath) {
+        setDetectState(next);
+      }
+    },
+    [rootPath]
+  );
+
+  const applySnapshotResponse = React.useCallback(
+    (path: string, res: any) => {
+      const next: SnapshotState = {
+        status: res.ok ? 'ready' : 'error',
+        isIosProject: Boolean(res.isIosProject),
+        container: res.container ?? null,
+        devices: Array.isArray(res.devices) ? res.devices : [],
+        booted: Array.isArray(res.booted) ? res.booted : [],
+        bestUdid: res.bestUdid ?? null,
+        schemes: Array.isArray(res.schemes) ? res.schemes : [],
+        defaultScheme: res.defaultScheme ?? null,
+        error: res.error ?? null,
+        stage: res.stage ?? null,
+        details: res.details ?? null,
+        lastUpdated: Date.now(),
+      };
+      updateSnapshot(path, next);
+    },
+    [updateSnapshot]
+  );
+
+  const refreshSnapshot = React.useCallback(
+    async (path: string, opts?: { silent?: boolean }) => {
+      const api = window.electronAPI;
+      if (!api?.iosSimulatorSnapshot) return;
+      const current = snapshotCache.get(path);
+      if (!opts?.silent) {
+        updateSnapshot(path, {
+          status: 'loading',
+          isIosProject: current?.isIosProject ?? true,
+          container: current?.container ?? null,
+          devices: current?.devices ?? [],
+          booted: current?.booted ?? [],
+          bestUdid: current?.bestUdid ?? null,
+          schemes: current?.schemes ?? [],
+          defaultScheme: current?.defaultScheme ?? null,
+          error: current?.error ?? null,
+          stage: current?.stage ?? null,
+          details: current?.details ?? null,
+          lastUpdated: current?.lastUpdated,
+        });
+      }
+      const res = await api.iosSimulatorSnapshot({ projectPath: path });
+      applySnapshotResponse(path, res);
+    },
+    [applySnapshotResponse, updateSnapshot]
+  );
+
+  const refreshDetect = React.useCallback(
+    async (path: string, opts?: { silent?: boolean }) => {
+      const api = window.electronAPI;
+      if (!api?.iosSimulatorDetect) return;
+      if (detectInFlight.has(path)) {
+        await detectInFlight.get(path);
         return;
       }
-      const detected = await detectIosProject(rootPath);
-      if (!cancelled) {
-        detectCacheRef.current = { path: rootPath, value: detected };
-        setIsIosProject(detected);
-        setIsDetecting(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [rootPath]);
 
-  const stageLabel = (stage?: string) => {
-    switch (stage) {
-      case 'validation':
-        return 'Validation';
-      case 'platform':
-        return 'Platform';
-      case 'xcode':
-        return 'Xcode';
-      case 'simctl':
-      case 'boot':
-      case 'bootstatus':
-        return 'Simulator';
-      case 'open':
-      case 'position':
-        return 'Window';
-      case 'container':
-        return 'Project';
-      case 'schemes':
-        return 'Schemes';
-      case 'build':
-        return 'Build';
-      case 'app':
-      case 'bundle-id':
-        return 'App';
-      case 'install':
-        return 'Install';
-      case 'launch':
-        return 'Launch';
-      case 'cancelled':
-        return 'Cancelled';
-      default:
-        return stage ? stage : 'Error';
+      const task = (async () => {
+        const current = detectCache.get(path);
+        if (!opts?.silent) {
+          updateDetectState(path, {
+            status: 'loading',
+            isIosProject: current?.isIosProject ?? false,
+            error: current?.error ?? null,
+            stage: current?.stage ?? null,
+            lastChecked: current?.lastChecked,
+          });
+        }
+        const res = await api.iosSimulatorDetect({ projectPath: path });
+        updateDetectState(path, {
+          status: res.ok ? 'ready' : 'error',
+          isIosProject: Boolean(res.ok && res.isIosProject),
+          error: res.error ?? null,
+          stage: res.stage ?? null,
+          lastChecked: Date.now(),
+        });
+        if (!res.ok || !res.isIosProject) {
+          updateSnapshot(path, {
+            status: 'idle',
+            isIosProject: false,
+            container: null,
+            devices: [],
+            booted: [],
+            bestUdid: null,
+            schemes: [],
+            defaultScheme: null,
+            error: null,
+            stage: null,
+            details: null,
+            lastUpdated: undefined,
+          });
+          return;
+        }
+        const snapshotState = snapshotCache.get(path);
+        if (!snapshotState || snapshotState.status === 'idle') {
+          await refreshSnapshot(path, { silent: false });
+        }
+      })();
+
+      detectInFlight.set(path, task);
+      try {
+        await task;
+      } finally {
+        detectInFlight.delete(path);
+      }
+    },
+    [refreshSnapshot, updateDetectState, updateSnapshot]
+  );
+
+  React.useEffect(() => {
+    if (!rootPath) {
+      setSnapshot({
+        status: 'idle',
+        isIosProject: false,
+        devices: [],
+        booted: [],
+        bestUdid: null,
+        schemes: [],
+        defaultScheme: null,
+        container: null,
+        error: null,
+        stage: null,
+        details: null,
+        lastUpdated: undefined,
+      });
+      setDetectState({
+        status: 'idle',
+        isIosProject: false,
+        error: null,
+        stage: null,
+        lastChecked: undefined,
+      });
+      return;
     }
-  };
+
+    const cachedDetect = detectCache.get(rootPath);
+    if (cachedDetect) {
+      setDetectState(cachedDetect);
+    } else {
+      setDetectState({
+        status: 'loading',
+        isIosProject: false,
+        error: null,
+        stage: null,
+        lastChecked: undefined,
+      });
+    }
+
+    const cachedSnapshot = snapshotCache.get(rootPath);
+    if (cachedSnapshot) {
+      setSnapshot(cachedSnapshot);
+    } else {
+      setSnapshot({
+        status: 'idle',
+        isIosProject: false,
+        devices: [],
+        booted: [],
+        bestUdid: null,
+        schemes: [],
+        defaultScheme: null,
+        container: null,
+        error: null,
+        stage: null,
+        details: null,
+        lastUpdated: undefined,
+      });
+    }
+
+    if (cachedDetect?.isIosProject) {
+      const shouldShowLoading = !cachedSnapshot || cachedSnapshot.status === 'idle';
+      void refreshSnapshot(rootPath, { silent: !shouldShowLoading });
+      void refreshDetect(rootPath, { silent: true });
+    } else {
+      void refreshDetect(rootPath, { silent: false });
+    }
+  }, [refreshDetect, refreshSnapshot, rootPath]);
+
+  React.useEffect(() => {
+    if (!rootPath) return;
+    if (!detectState.isIosProject) return;
+    const api = window.electronAPI;
+    if (!api?.iosSimulatorPollerStart || !api?.iosSimulatorPollerStop) return;
+    const start = () => void api.iosSimulatorPollerStart();
+    const stop = () => void api.iosSimulatorPollerStop();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        start();
+        void refreshSnapshot(rootPath, { silent: true });
+      } else {
+        stop();
+      }
+    };
+    const handleFocus = () => {
+      start();
+      void refreshSnapshot(rootPath, { silent: true });
+    };
+    const handleBlur = () => stop();
+
+    start();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [detectState.isIosProject, refreshSnapshot, rootPath]);
 
   const parseTargetId = (value: string): { mode: 'running' | 'new'; id: string } | null => {
     const [mode, id] = value.split('::');
@@ -180,14 +348,14 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     return { mode, id };
   };
 
-  const runningSimulators = bootedDevices;
+  const runningSimulators = snapshot.booted;
   const runningIds = React.useMemo(
     () => new Set(runningSimulators.map((device) => device.udid)),
     [runningSimulators]
   );
   const newSimulators = React.useMemo(
-    () => availableDevices.filter((device) => !runningIds.has(device.udid)),
-    [availableDevices, runningIds]
+    () => snapshot.devices.filter((device) => !runningIds.has(device.udid)),
+    [runningIds, snapshot.devices]
   );
   const targetIdList = React.useMemo(
     () => [
@@ -200,14 +368,14 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     if (runningSimulators[0]?.udid) {
       return `running::${runningSimulators[0].udid}`;
     }
-    if (bestUdid) {
-      return `new::${bestUdid}`;
+    if (snapshot.bestUdid) {
+      return `new::${snapshot.bestUdid}`;
     }
     if (newSimulators[0]?.udid) {
       return `new::${newSimulators[0].udid}`;
     }
     return null;
-  }, [bestUdid, newSimulators, runningSimulators]);
+  }, [newSimulators, runningSimulators, snapshot.bestUdid]);
 
   React.useEffect(() => {
     if (!defaultTarget) return;
@@ -223,21 +391,29 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       ? runningSimulators.find((device) => device.udid === selectedTarget.id)
       : newSimulators.find((device) => device.udid === selectedTarget?.id);
   const resolvedScheme = React.useMemo(() => {
-    if (selectedScheme) return selectedScheme;
-    if (defaultScheme && schemes.includes(defaultScheme)) return defaultScheme;
-    if (schemes.length === 1) return schemes[0];
+    let stored: string | null = null;
+    if (schemeStorageKey) {
+      try {
+        stored = window.localStorage.getItem(schemeStorageKey);
+      } catch {
+        stored = null;
+      }
+    }
+    if (stored && snapshot.schemes.includes(stored)) return stored;
+    if (snapshot.defaultScheme && snapshot.schemes.includes(snapshot.defaultScheme)) {
+      return snapshot.defaultScheme;
+    }
+    if (snapshot.schemes.length === 1) return snapshot.schemes[0];
     return null;
-  }, [defaultScheme, schemes, selectedScheme]);
-  const isInitialLoading =
-    isDetecting ||
-    devicesStatus === 'loading' ||
-    bootedStatus === 'loading' ||
-    schemeStatus === 'loading';
-  const needsSchemeSelection = schemes.length > 1 && !resolvedScheme;
-  const hasSchemeError = schemeStatus === 'error';
-  const hasDeviceError = devicesStatus === 'error' || bootedStatus === 'error';
-  const showSchemeSelect = schemes.length > 1 || schemeStatus !== 'ready';
-  const hasNoDevices = devicesStatus === 'ready' && availableDevices.length === 0;
+  }, [schemeStorageKey, snapshot.defaultScheme, snapshot.schemes]);
+  const isInitialLoading = detectState.isIosProject && snapshot.status === 'loading';
+  const needsSchemeSelection = snapshot.schemes.length > 1 && !resolvedScheme;
+  const hasSchemeError = snapshot.status === 'error' && snapshot.stage === 'schemes';
+  const hasDeviceError =
+    snapshot.status === 'error' && snapshot.stage !== 'schemes' && snapshot.stage !== 'build';
+  const showSchemeSelect = snapshot.schemes.length > 1 || snapshot.status !== 'ready';
+  const hasNoDevices = snapshot.status === 'ready' && snapshot.devices.length === 0;
+  const hasCopyableError = Boolean(snapshot.error || snapshot.details?.stderr);
   const canRun =
     Boolean(selectedDevice) &&
     !isBusy &&
@@ -247,52 +423,46 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     !hasNoDevices;
   const displayMode: 'running' | 'new' =
     selectedTarget?.mode ?? (runningSimulators.length > 0 ? 'running' : 'new');
-  const actionLabel = displayMode === 'running' ? 'Attach' : 'Run';
+  const actionLabel = 'Run';
   const actionHint = displayMode === 'running' ? 'Running' : 'New';
-  const ActionIcon = displayMode === 'running' ? Cable : Play;
+  const ActionIcon = Play;
   const actionChipLabel =
     isBusy && actionStage
       ? actionStage
-      : isDetecting
-        ? 'Detecting'
-        : schemeStatus === 'loading'
-          ? 'Schemes'
-          : devicesStatus === 'loading' || bootedStatus === 'loading'
-            ? 'Devices'
-            : schemeError || hasDeviceError
-              ? 'Error'
-              : needsSchemeSelection
-                ? 'Scheme'
-                : actionHint;
+      : isInitialLoading
+        ? 'Loading iOS data'
+        : hasDeviceError || hasSchemeError
+          ? 'Error'
+          : needsSchemeSelection
+            ? 'Scheme'
+            : actionHint;
   const actionElapsed =
     actionStartedAt && actionNow ? Math.floor((actionNow - actionStartedAt) / 1000) : 0;
   const isCancelMode = isBusy && isActionHovered;
   const ActionVisualIcon = isCancelMode ? X : ActionIcon;
   const actionTitle = isCancelMode
     ? 'Cancel the current simulator task'
-    : isDetecting
-      ? 'Checking for an iOS project'
-      : schemeError
-        ? `Unable to load schemes: ${schemeError}`
-        : devicesError
-          ? `Simulator tools unavailable: ${devicesError}`
-          : hasNoDevices
-            ? 'No iOS simulators are installed'
-            : displayMode === 'running'
-              ? 'Attach to a running simulator'
-              : 'Build and run in a new simulator';
+    : hasSchemeError
+      ? `Unable to load schemes: ${snapshot.error ?? 'Unknown error'}`
+      : hasDeviceError
+        ? `Simulator tools unavailable: ${snapshot.error ?? 'Unknown error'}`
+        : hasNoDevices
+          ? 'No iOS simulators are installed'
+          : displayMode === 'running'
+            ? 'Run on a running simulator'
+            : 'Run on a new simulator';
   const actionText = isCancelMode
     ? 'Cancel'
     : isBusy
       ? `Working${actionElapsed > 0 ? ` ${actionElapsed}s` : ''}`
       : isInitialLoading
-        ? 'Loading'
+        ? 'Loading iOS data'
         : hasNoDevices
           ? 'No simulators'
           : actionLabel;
   const emptyState = React.useMemo(() => {
-    if (devicesError) {
-      const isXcodeMissing = devicesStage === 'xcode';
+    if (hasDeviceError) {
+      const isXcodeMissing = snapshot.stage === 'xcode';
       return {
         title: isXcodeMissing ? 'Install Xcode to continue' : 'Simulator tools unavailable',
         message: isXcodeMissing ? null : 'Check your Xcode install and command line tools.',
@@ -312,7 +482,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       };
     }
     return null;
-  }, [devicesError, devicesStage, hasNoDevices]);
+  }, [hasDeviceError, hasNoDevices, snapshot.stage]);
 
   React.useEffect(() => {
     if (!isBusy || !actionStartedAt) return;
@@ -323,38 +493,18 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
 
   const showActionSpinner = isBusy || isInitialLoading;
   const schemePlaceholder =
-    schemeStatus === 'loading'
-      ? 'Loading schemes...'
-      : schemeStatus === 'idle'
-        ? 'Load schemes'
-        : schemeError
-          ? 'Schemes unavailable'
-          : schemes.length === 0
-            ? 'No schemes'
-            : 'Select scheme';
-  const devicePlaceholder = isDetecting
-    ? 'Detecting iOS project...'
-    : devicesError
-      ? 'Simulator tools unavailable'
-      : hasNoDevices
-        ? 'No simulators installed'
-        : devicesStatus === 'loading' || bootedStatus === 'loading'
-          ? 'Loading simulators...'
-          : 'Select simulator';
-
-  const formatDeviceLabel = (device: SimulatorDevice) => {
-    const runtime = device.runtime?.name ? ` (${device.runtime.name})` : '';
-    return `${device.name}${runtime}`;
-  };
-
-  const readStoredScheme = React.useCallback(() => {
-    if (!schemeStorageKey) return null;
-    try {
-      return window.localStorage.getItem(schemeStorageKey);
-    } catch {
-      return null;
-    }
-  }, [schemeStorageKey]);
+    snapshot.status === 'loading'
+      ? 'Loading iOS data...'
+      : snapshot.schemes.length === 0
+        ? 'No schemes'
+        : 'Select scheme';
+  const devicePlaceholder = hasDeviceError
+    ? 'Simulator tools unavailable'
+    : hasNoDevices
+      ? 'No simulators installed'
+      : snapshot.status === 'loading'
+        ? 'Loading iOS data...'
+        : 'Select simulator';
 
   const storeScheme = React.useCallback(
     (value: string) => {
@@ -366,146 +516,42 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     [schemeStorageKey]
   );
 
-  const applySchemes = React.useCallback(
-    (nextSchemes: string[], nextDefault: string | null) => {
-      setSchemes(nextSchemes);
-      setDefaultScheme(nextDefault);
-      setSchemeStatus('ready');
-      setSchemeError(null);
-
-      const previousSelection = selectedSchemeRef.current;
-      let nextSelected: string | null = null;
-      let nextHasUserSelected = hasUserSelectedSchemeRef.current;
-
-      if (nextHasUserSelected && previousSelection && nextSchemes.includes(previousSelection)) {
-        nextSelected = previousSelection;
-      } else {
-        const stored = readStoredScheme();
-        if (stored && nextSchemes.includes(stored)) {
-          nextSelected = stored;
-          nextHasUserSelected = true;
-        } else if (nextDefault && nextSchemes.includes(nextDefault)) {
-          nextSelected = nextDefault;
-          nextHasUserSelected = false;
-        } else if (nextSchemes.length === 1) {
-          nextSelected = nextSchemes[0];
-          nextHasUserSelected = false;
-        } else {
-          nextSelected = null;
-          nextHasUserSelected = false;
-        }
-      }
-
-      setSelectedScheme(nextSelected);
-      setHasUserSelectedScheme(nextHasUserSelected);
-    },
-    [readStoredScheme]
-  );
-
-  const refreshSchemes = React.useCallback(async () => {
-    if (!rootPath) return;
-    if (schemeStatus === 'loading') return;
-    const api = window.electronAPI;
-    if (!api?.iosSimulatorSchemes) return;
-
-    const cached = schemeCacheRef.current;
-    if (cached && cached.path === rootPath && Date.now() - cached.timestamp < 10 * 60 * 1000) {
-      applySchemes(cached.schemes, cached.defaultScheme);
-      return;
-    }
-
-    setSchemeStatus('loading');
-    const res = await api.iosSimulatorSchemes({ projectPath: rootPath });
-    if (!res.ok) {
-      const message = res.error || 'Unable to load Xcode schemes.';
-      setSchemeStatus('error');
-      setSchemeError(message);
-      setSchemes([]);
-      setDefaultScheme(null);
-      setSelectedScheme(null);
-      setHasUserSelectedScheme(false);
-      if (lastSchemeErrorRef.current !== message) {
-        lastSchemeErrorRef.current = message;
-        if (res.stage !== 'xcode') {
-          toast({
-            title: 'Unable to load schemes',
-            description: message,
-            variant: 'destructive',
-          });
-        }
-      }
-      return;
-    }
-
-    lastSchemeErrorRef.current = null;
-    const nextSchemes = Array.isArray(res.schemes) ? res.schemes : [];
-    const nextDefault = res.defaultScheme ?? null;
-    schemeCacheRef.current = {
-      path: rootPath,
-      schemes: nextSchemes,
-      defaultScheme: nextDefault,
-      timestamp: Date.now(),
+  const handleCopy = React.useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) return;
+    const payload = {
+      timestamp: new Date().toISOString(),
+      projectPath: rootPath,
+      container: snapshot.container,
+      status: snapshot.status,
+      stage: snapshot.stage,
+      error: snapshot.error,
+      details: snapshot.details,
+      devices: snapshot.devices,
+      booted: snapshot.booted,
+      schemes: snapshot.schemes,
+      defaultScheme: snapshot.defaultScheme,
+      bestUdid: snapshot.bestUdid,
+      lastUpdated: snapshot.lastUpdated,
     };
-    applySchemes(nextSchemes, nextDefault);
-  }, [applySchemes, rootPath, schemeStatus, toast]);
-
-  const refreshDeviceState = React.useCallback(async (opts?: { silent?: boolean }) => {
-    const api = window.electronAPI;
-    if (!api?.iosSimulatorList) return;
-    if (!opts?.silent) {
-      setDevicesStatus('loading');
-      setBootedStatus('loading');
-    }
-    const res = await api.iosSimulatorList();
-    if (res.ok && Array.isArray(res.devices)) {
-      setAvailableDevices(res.devices);
-      setBestUdid(res.bestUdid ?? null);
-      setDevicesStatus('ready');
-      setBootedDevices(res.devices.filter((device) => device.state === 'Booted'));
-      setBootedStatus('ready');
-      setDevicesError(null);
-      setDevicesStage(null);
-    } else {
-      const message = res.error || 'Simulator tools unavailable.';
-      setDevicesError(message);
-      setDevicesStage(res.stage ?? null);
-      if (!opts?.silent) {
-        setDevicesStatus('error');
-        setBootedStatus('error');
-      } else {
-        setDevicesStatus((current) => (current === 'loading' ? 'error' : current));
-        setBootedStatus((current) => (current === 'loading' ? 'error' : current));
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setCopied(true);
+      if (copyResetRef.current !== null) {
+        window.clearTimeout(copyResetRef.current);
       }
+      copyResetRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyResetRef.current = null;
+      }, 2000);
+      toast({ title: 'Copied', description: 'iOS simulator details copied.' });
+    } catch (error) {
+      toast({
+        title: 'Copy failed',
+        description: error instanceof Error ? error.message : 'Unable to copy details.',
+        variant: 'destructive',
+      });
     }
-  }, []);
-
-  const refreshDeviceStateWithFallback = React.useCallback(async () => {
-    if (devicesStatus === 'loading' || bootedStatus === 'loading') return;
-    setDevicesStatus('loading');
-    setBootedStatus('loading');
-    window.setTimeout(() => {
-      setDevicesStatus((current) => (current === 'loading' ? 'ready' : current));
-      setBootedStatus((current) => (current === 'loading' ? 'ready' : current));
-    }, 700);
-    await refreshDeviceState({ silent: true });
-  }, [bootedStatus, devicesStatus, refreshDeviceState]);
-
-  const refreshDeviceStateSoon = React.useCallback(() => {
-    window.setTimeout(() => {
-      void refreshDeviceState({ silent: true });
-    }, 350);
-  }, [refreshDeviceState]);
-
-  React.useEffect(() => {
-    if (!rootPath || !isIosProject) return;
-    void refreshDeviceState();
-    void refreshDeviceStateWithFallback();
-    void refreshSchemes();
-    const interval = setInterval(() => {
-      void refreshDeviceState({ silent: true });
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [isIosProject, refreshDeviceState, refreshDeviceStateWithFallback, refreshSchemes, rootPath]);
+  }, [rootPath, snapshot, toast]);
 
   const resetActionState = () => {
     setIsBusy(false);
@@ -516,7 +562,6 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
 
   const handleCancel = async () => {
     resetActionState();
-    setBootedDevices([]);
     try {
       const api = window.electronAPI;
       const res = await api?.iosSimulatorCancel?.();
@@ -543,7 +588,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   const handleRun = async () => {
     if (isCancelMode) {
       await handleCancel();
-      refreshDeviceStateSoon();
+      void refreshSnapshot(rootPath, { silent: true });
       return;
     }
     if (isBusy) {
@@ -557,9 +602,6 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       return;
     }
     if (!resolvedScheme) {
-      if (schemeStatus === 'idle') {
-        void refreshSchemes();
-      }
       toast({
         title: 'Select a scheme',
         description: 'Choose a scheme to build and run.',
@@ -583,11 +625,11 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
         const launchRes = await api.iosSimulatorLaunch({ udid: selectedDevice.udid });
         if (!launchRes.ok) {
           toast({
-            title: `Simulator ${stageLabel(launchRes.stage)} failed`,
+            title: 'Simulator launch failed',
             description: launchRes.error || 'Unable to launch simulator.',
             variant: 'destructive',
           });
-          refreshDeviceStateSoon();
+          void refreshSnapshot(rootPath, { silent: true });
           return;
         }
       }
@@ -603,17 +645,14 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
           return;
         }
         toast({
-          title: `Run ${stageLabel(buildRes.stage)} failed`,
+          title: 'Run failed',
           description: buildRes.error || 'Unable to run the app.',
           variant: 'destructive',
         });
         return;
       }
 
-      void refreshDeviceState();
-      if (buildRes.details?.stdout || buildRes.details?.stderr) {
-        console.info('[iOS Simulator] build output', buildRes.details);
-      }
+      void refreshSnapshot(rootPath, { silent: true });
     } catch (error) {
       toast({
         title: 'Simulator command failed',
@@ -622,11 +661,11 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
       });
     } finally {
       resetActionState();
-      refreshDeviceStateSoon();
+      void refreshSnapshot(rootPath, { silent: true });
     }
   };
 
-  if (!rootPath || (!isIosProject && !isDetecting)) return null;
+  if (!rootPath || !detectState.isIosProject) return null;
 
   return (
     <div
@@ -656,12 +695,32 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                   </div>
                 ) : null}
               </div>
-              {emptyState.linkUrl ? (
+              {hasCopyableError ? (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
                   className="ml-auto h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    void handleCopy();
+                  }}
+                  title={copied ? 'Copied' : 'Copy details'}
+                  aria-label={copied ? 'Copied' : 'Copy details'}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </Button>
+              ) : null}
+
+              {emptyState.linkUrl ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
                   onClick={() => window.electronAPI?.openExternal?.(emptyState.linkUrl ?? '')}
                   title={emptyState.linkLabel}
                   aria-label={emptyState.linkLabel}
@@ -699,16 +758,9 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                   <Select
                     value={resolvedScheme ?? undefined}
                     onValueChange={(value) => {
-                      setSelectedScheme(value);
-                      setHasUserSelectedScheme(true);
                       storeScheme(value);
                     }}
-                    onOpenChange={(open) => {
-                      if (open && schemeStatus === 'idle') {
-                        void refreshSchemes();
-                      }
-                    }}
-                    disabled={isBusy || isDetecting}
+                    disabled={isBusy || snapshot.status === 'loading'}
                   >
                     <SelectTrigger
                       aria-label="Xcode scheme"
@@ -721,7 +773,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                         <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
                           Scheme
                         </div>
-                        {schemes.map((scheme) => (
+                        {snapshot.schemes.map((scheme: string) => (
                           <SelectItem key={scheme} value={scheme} className="text-xs">
                             {scheme}
                           </SelectItem>
@@ -738,7 +790,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                   setTargetId(value);
                   setHasUserSelected(true);
                 }}
-                disabled={isBusy || isDetecting || devicesStatus !== 'ready'}
+                disabled={isBusy || snapshot.status === 'loading' || snapshot.devices.length === 0}
               >
                 <SelectTrigger
                   aria-label="Simulator"

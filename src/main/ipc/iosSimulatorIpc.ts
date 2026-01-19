@@ -2,17 +2,31 @@ import { ipcMain } from 'electron';
 import {
   buildAndRunIosApp,
   cancelIosSimulatorTask,
-  detectIosProject,
-  getBootedSimulators,
   launchSimulator,
-  listIosSimulators,
-  listXcodeSchemes,
+  getIosSimulatorSnapshot,
+  startIosSimulatorPolling,
+  stopIosSimulatorPolling,
+  detectIosProject,
 } from '../services/iosSimulatorService';
 
 export function registerIosSimulatorIpc() {
-  ipcMain.handle('ios:simulator:list', async () => listIosSimulators());
+  ipcMain.handle('ios:simulator:snapshot', async (_event, args: { projectPath: string }) => {
+    const projectPath = String(args?.projectPath || '').trim();
+    if (!projectPath) {
+      return { ok: false, error: 'Project path is required.', stage: 'validation' };
+    }
+    return getIosSimulatorSnapshot(projectPath);
+  });
 
-  ipcMain.handle('ios:simulator:booted', async () => getBootedSimulators());
+  ipcMain.handle('ios:simulator:poller:start', async () => {
+    startIosSimulatorPolling();
+    return { ok: true };
+  });
+
+  ipcMain.handle('ios:simulator:poller:stop', async () => {
+    stopIosSimulatorPolling();
+    return { ok: true };
+  });
 
   ipcMain.handle('ios:simulator:detect', async (_event, args: { projectPath: string }) => {
     const projectPath = String(args?.projectPath || '').trim();
@@ -20,14 +34,6 @@ export function registerIosSimulatorIpc() {
       return { ok: false, error: 'Project path is required.', stage: 'validation' };
     }
     return detectIosProject(projectPath);
-  });
-
-  ipcMain.handle('ios:simulator:schemes', async (_event, args: { projectPath: string }) => {
-    const projectPath = String(args?.projectPath || '').trim();
-    if (!projectPath) {
-      return { ok: false, error: 'Project path is required.', stage: 'validation' };
-    }
-    return listXcodeSchemes(projectPath);
   });
 
   ipcMain.handle('ios:simulator:launch', async (_event, args: { udid: string }) => {

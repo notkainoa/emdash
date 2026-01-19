@@ -390,16 +390,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // iOS simulator helpers
-  iosSimulatorList: () => ipcRenderer.invoke('ios:simulator:list'),
-  iosSimulatorBooted: () => ipcRenderer.invoke('ios:simulator:booted'),
   iosSimulatorDetect: (args: { projectPath: string }) =>
     ipcRenderer.invoke('ios:simulator:detect', args),
-  iosSimulatorSchemes: (args: { projectPath: string }) =>
-    ipcRenderer.invoke('ios:simulator:schemes', args),
   iosSimulatorLaunch: (args: { udid: string }) => ipcRenderer.invoke('ios:simulator:launch', args),
   iosSimulatorBuildRun: (args: { projectPath: string; udid: string; scheme?: string }) =>
     ipcRenderer.invoke('ios:simulator:build-run', args),
   iosSimulatorCancel: () => ipcRenderer.invoke('ios:simulator:cancel'),
+  iosSimulatorSnapshot: (args: { projectPath: string }) =>
+    ipcRenderer.invoke('ios:simulator:snapshot', args),
+  iosSimulatorPollerStart: () => ipcRenderer.invoke('ios:simulator:poller:start'),
+  iosSimulatorPollerStop: () => ipcRenderer.invoke('ios:simulator:poller:stop'),
 
   // Main-managed browser (WebContentsView)
   browserShow: (bounds: { x: number; y: number; width: number; height: number }, url?: string) =>
@@ -706,46 +706,9 @@ export interface ElectronAPI {
   ) => () => void;
 
   // iOS simulator helpers
-  iosSimulatorList: () => Promise<{
-    ok: boolean;
-    devices?: Array<{
-      name: string;
-      udid: string;
-      state: string;
-      isAvailable: boolean;
-      runtime: { identifier: string; name: string; platform?: string; version?: string };
-      isIphone: boolean;
-      modelNumber: number;
-    }>;
-    bestUdid?: string | null;
-    error?: string;
-    stage?: string;
-  }>;
-  iosSimulatorBooted: () => Promise<{
-    ok: boolean;
-    devices?: Array<{
-      name: string;
-      udid: string;
-      state: string;
-      isAvailable: boolean;
-      runtime: { identifier: string; name: string; platform?: string; version?: string };
-      isIphone: boolean;
-      modelNumber: number;
-    }>;
-    error?: string;
-    stage?: string;
-  }>;
   iosSimulatorDetect: (args: { projectPath: string }) => Promise<{
     ok: boolean;
     isIosProject?: boolean;
-    container?: { type: 'workspace' | 'project'; path: string };
-    error?: string;
-    stage?: string;
-  }>;
-  iosSimulatorSchemes: (args: { projectPath: string }) => Promise<{
-    ok: boolean;
-    schemes?: string[];
-    defaultScheme?: string | null;
     container?: { type: 'workspace' | 'project'; path: string };
     error?: string;
     stage?: string;
@@ -760,13 +723,44 @@ export interface ElectronAPI {
     ok: boolean;
     stage?: string;
     error?: string;
-    details?: { stdout?: string; stderr?: string };
+    details?: { stdout?: string; stderr?: string; logPath?: string };
     scheme?: string;
     bundleId?: string;
     appPath?: string;
     derivedDataPath?: string;
   }>;
   iosSimulatorCancel: () => Promise<{ ok: boolean; cancelled: boolean }>;
+  iosSimulatorSnapshot: (args: { projectPath: string }) => Promise<{
+    ok: boolean;
+    isIosProject?: boolean;
+    container?: { type: 'workspace' | 'project'; path: string };
+    devices?: Array<{
+      name: string;
+      udid: string;
+      state: string;
+      isAvailable: boolean;
+      runtime: { identifier: string; name: string; platform?: string; version?: string };
+      isIphone: boolean;
+      modelNumber: number;
+    }>;
+    booted?: Array<{
+      name: string;
+      udid: string;
+      state: string;
+      isAvailable: boolean;
+      runtime: { identifier: string; name: string; platform?: string; version?: string };
+      isIphone: boolean;
+      modelNumber: number;
+    }>;
+    bestUdid?: string | null;
+    schemes?: string[];
+    defaultScheme?: string | null;
+    error?: string;
+    stage?: string;
+    details?: { stdout?: string; stderr?: string; logPath?: string };
+  }>;
+  iosSimulatorPollerStart: () => Promise<{ ok: boolean }>;
+  iosSimulatorPollerStop: () => Promise<{ ok: boolean }>;
 
   // Main-managed browser (WebContentsView)
   browserShow: (
