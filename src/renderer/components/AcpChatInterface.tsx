@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { getMentionKeyAction } from '../lib/fileMentions';
+import claudeLogo from '../../assets/images/claude.png';
 import { useFileMentions } from '../hooks/useFileMentions';
 import FileMentionDropdown from './FileMentionDropdown';
 import { Task } from '../types/chat';
@@ -28,13 +29,7 @@ import { type Provider } from '../types';
 import InstallBanner from './InstallBanner';
 import { Button } from './ui/button';
 import { getInstallCommandForProvider } from '@shared/providers/registry';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Spinner } from './ui/spinner';
 
 // OpenAI logo SVG component
@@ -53,6 +48,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Badge } from './ui/badge';
 import { cn } from '@/lib/utils';
 import { useAcpSession } from '@/lib/acpSessions';
+import { formatClaudeModelOptionsForUi } from './acpModelFormatting';
 import {
   type ContentBlock,
   type DiffPreview,
@@ -168,13 +164,19 @@ type ModelOption = {
   description?: string;
 };
 
-// Static Codex models for instant loading (no waiting for IPC)
-const CODEX_MODELS: ModelOption[] = [
-  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-  { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-  { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-  { id: 'gpt-5.2', label: 'GPT-5.2' },
-];
+// Static models for instant loading (no waiting for IPC)
+const PROVIDER_MODELS: Record<string, ModelOption[]> = {
+  codex: [
+    { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+    { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
+    { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
+    { id: 'gpt-5.2', label: 'GPT-5.2' },
+  ],
+  claude: [
+    { id: 'claude-opus-4-5', label: 'Opus 4.5' },
+    { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
+  ],
+};
 
 type ModelVariant = ModelOption & {
   baseId: string;
@@ -408,6 +410,8 @@ const getBudgetFromConfig = (option?: AcpConfigOption | null): ThinkingBudgetLev
   return inferred;
 };
 
+const isUltrathinkEnabled = (value: string) => value === '1' || value.toLowerCase() === 'true';
+
 const findThinkingConfigOption = (options: AcpConfigOption[]): AcpConfigOption | null => {
   let best: { option: AcpConfigOption; score: number } | null = null;
   for (const option of options) {
@@ -530,7 +534,9 @@ const AcpChatInterface: React.FC<Props> = ({
   const [input, setInput] = useState('');
   const [showPlan, setShowPlan] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-  const [modelId, setModelId] = useState<string>('gpt-5.2-codex');
+  const [modelId, setModelId] = useState<string>(
+    provider === 'claude' ? 'claude-opus-4-5' : 'gpt-5.2-codex'
+  );
   const [planModePromptSent, setPlanModePromptSent] = useState(false);
   const [lastUserPlanModeSent, setLastUserPlanModeSent] = useState(false);
   const [planBannerDismissed, setPlanBannerDismissed] = useState(() => {
@@ -539,6 +545,7 @@ const AcpChatInterface: React.FC<Props> = ({
   });
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
+  const [isUltrathink, setIsUltrathink] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -808,8 +815,7 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [sessionId]);
 
   useEffect(() => {
-    hasMessagesRef.current =
-      historyHasMessages || feed.some((item) => item.type === 'message');
+    hasMessagesRef.current = historyHasMessages || feed.some((item) => item.type === 'message');
   }, [historyHasMessages, feed]);
 
   useEffect(() => {
@@ -821,8 +827,12 @@ const AcpChatInterface: React.FC<Props> = ({
       setModelId(storedModel);
     }
     const storedBudget = readLocalStorage(thinkingStorageKey);
-    if (storedBudget && isThinkingBudgetLevel(storedBudget)) {
-      setThinkingBudget(storedBudget);
+    if (storedBudget) {
+      if (provider === 'claude') {
+        setIsUltrathink(isUltrathinkEnabled(storedBudget));
+      } else if (isThinkingBudgetLevel(storedBudget)) {
+        setThinkingBudget(storedBudget);
+      }
     }
   }, [historyReady, historyHasMessages, acpConversationId, modelStorageKey, thinkingStorageKey]);
 
@@ -1078,13 +1088,21 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
     const displayBlocks = [...contentBlocks];
 
+    if (provider === 'claude' && isUltrathink) {
+      const lastBlock = displayBlocks[displayBlocks.length - 1];
+      if (lastBlock && lastBlock.type === 'text' && typeof lastBlock.text === 'string') {
+        lastBlock.text = `${lastBlock.text}\n\nULTRATHINK`;
+      }
+    }
+
     const agentBlocks: ContentBlock[] = [];
     if (planMode) {
       if (includePlanInstruction)
         agentBlocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
       else agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
     }
-    agentBlocks.push(...contentBlocks);
+
+    agentBlocks.push(...displayBlocks);
 
     return { display: displayBlocks, agent: agentBlocks };
   };
@@ -1205,9 +1223,16 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       label: entry.label,
       description: entry.description,
     }));
+
+    if (provider === 'claude' && dynamicModels.length > 0) {
+      const formatted = formatClaudeModelOptionsForUi(dynamicModels);
+      if (formatted.length > 0) return formatted;
+    }
+
     // Use dynamic models if available, otherwise fall back to static
-    return dynamicModels.length > 0 ? dynamicModels : CODEX_MODELS;
-  }, [modelCatalog]);
+    const fallback = PROVIDER_MODELS[provider] ?? PROVIDER_MODELS.codex ?? [];
+    return dynamicModels.length > 0 ? dynamicModels : fallback;
+  }, [modelCatalog, provider]);
 
   const rawSelectedModelId = configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
   const selectedModelParts = splitModelId(rawSelectedModelId, null);
@@ -1242,7 +1267,9 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     [thinkingConfigOption]
   );
   const modelDrivenBudget = useMemo(() => budgetFromEffort(currentEffort), [currentEffort]);
-  const fallbackThinkingConfigId = provider === 'codex' ? 'model_reasoning_effort' : null;
+  const showThinkingBudget =
+    provider === 'codex' || provider === 'claude' || Boolean(thinkingConfigId);
+  const fallbackThinkingConfigId = showThinkingBudget ? 'model_reasoning_effort' : null;
   const availableBudgetLevels = useMemo(() => {
     if (thinkingConfigMapping.availableLevels.size) {
       return EFFORT_ORDER.filter((level) => thinkingConfigMapping.availableLevels.has(level));
@@ -1272,6 +1299,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   const dotSize = dotCount >= 4 ? 3 : 4;
   const dotGap = dotCount >= 4 ? 2 : 3;
   const canSetThinkingBudget =
+    showThinkingBudget &&
     Boolean(sessionId) &&
     (Boolean(thinkingConfigId) ||
       Boolean(selectedModelEntry?.variants.length) ||
@@ -1341,14 +1369,30 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       if (modelValue) {
         writeLocalStorage(modelStorageKey, modelValue);
       }
+
+      if (!showThinkingBudget) return;
+      if (provider === 'claude') {
+        writeLocalStorage(thinkingStorageKey, isUltrathink ? '1' : '0');
+        return;
+      }
+
       const budgetValue = persistedThinkingBudgetRef.current;
       if (budgetValue) {
         writeLocalStorage(thinkingStorageKey, budgetValue);
       }
     };
-  }, [modelStorageKey, thinkingStorageKey]);
+  }, [isUltrathink, modelStorageKey, provider, thinkingStorageKey, showThinkingBudget]);
 
   const handleThinkingBudgetClick = useCallback(() => {
+    if (!showThinkingBudget) return;
+
+    if (provider === 'claude') {
+      const next = !isUltrathink;
+      setIsUltrathink(next);
+      writeLocalStorage(thinkingStorageKey, next ? '1' : '0');
+      return;
+    }
+
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
     setThinkingBudget(next);
     writeLocalStorage(thinkingStorageKey, next);
@@ -1388,23 +1432,24 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     const configId = fallbackThinkingConfigId;
     if (!configId) return;
     const targetValue = next;
-    void sessionActions
-      .setConfigOption(configId, targetValue, { optimistic: true })
-      .then((res) => {
-        if (!res?.success) {
-          uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
-        }
-      });
+    void sessionActions.setConfigOption(configId, targetValue, { optimistic: true }).then((res) => {
+      if (!res?.success) {
+        uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
+      }
+    });
   }, [
     activeBudgetLevel,
+    availableBudgetLevels,
     canSetThinkingBudget,
     fallbackThinkingConfigId,
-    availableBudgetLevels,
+    isUltrathink,
+    provider,
+    selectedModelEntry,
+    sessionActions,
+    showThinkingBudget,
     thinkingConfigId,
     thinkingConfigMapping.budgetToChoice,
     thinkingStorageKey,
-    selectedModelEntry,
-    sessionActions,
     uiLog,
   ]);
 
@@ -2482,7 +2527,11 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                       disabled={!canSetModel || modelOptions.length === 0}
                       className="h-8 w-auto gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm"
                     >
-                      <OpenAIIcon className="h-3.5 w-3.5 shrink-0" />
+                      {provider === 'claude' ? (
+                        <img src={claudeLogo} alt="Claude" className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <OpenAIIcon className="h-3.5 w-3.5 shrink-0" />
+                      )}
                       <SelectValue
                         placeholder={modelOptions.length ? 'Model' : 'Model (not supported)'}
                       />
@@ -2514,36 +2563,67 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                   >
                     <Clipboard className="h-4 w-4" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleThinkingBudgetClick}
-                    title={
-                      canSetThinkingBudget
-                        ? `Thinking budget: ${activeBudgetLabel}`
-                        : `Thinking budget: ${activeBudgetLabel} (not supported)`
-                    }
-                    aria-label={`Thinking budget: ${activeBudgetLabel}`}
-                    disabled={!canSetThinkingBudget}
-                    className="flex h-8 items-center gap-2 rounded-md bg-violet-100/70 px-2 text-xs font-medium text-violet-700 transition hover:bg-violet-100/90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15"
-                  >
-                    <Brain className="h-4 w-4" />
-                    <span
-                      className="flex flex-col-reverse items-center justify-center"
-                      style={{ gap: `${dotGap}px` }}
-                      aria-hidden="true"
+                  {showThinkingBudget ? (
+                    <button
+                      type="button"
+                      onClick={handleThinkingBudgetClick}
+                      title={
+                        provider === 'claude'
+                          ? isUltrathink
+                            ? 'Ultrathink (appends ULTRATHINK)'
+                            : 'Enable Ultrathink (appends ULTRATHINK)'
+                          : canSetThinkingBudget
+                            ? `Thinking budget: ${activeBudgetLabel}`
+                            : `Thinking budget: ${activeBudgetLabel} (not supported)`
+                      }
+                      aria-label={
+                        provider === 'claude'
+                          ? isUltrathink
+                            ? 'Ultrathink enabled'
+                            : 'Ultrathink disabled'
+                          : `Thinking budget: ${activeBudgetLabel}`
+                      }
+                      aria-pressed={provider === 'claude' ? isUltrathink : undefined}
+                      disabled={provider === 'claude' ? false : !canSetThinkingBudget}
+                      className={`flex h-8 items-center gap-2 rounded-md px-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                        provider === 'claude'
+                          ? isUltrathink
+                            ? 'bg-violet-100/70 text-violet-700 ring-1 ring-violet-500/30 hover:bg-violet-100/90 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/20'
+                            : 'bg-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                          : 'bg-violet-100/70 text-violet-700 hover:bg-violet-100/90 dark:bg-violet-500/10 dark:text-violet-200 dark:hover:bg-violet-500/15'
+                      }`}
                     >
-                      {Array.from({ length: dotCount }).map((_, idx) => (
-                        <span
-                          key={`thinking-dot-${idx}`}
-                          style={{ width: `${dotSize}px`, height: `${dotSize}px` }}
-                          className={`rounded-full ${
-                            idx <= activeBudgetIndex ? 'bg-current' : 'bg-muted-foreground/30'
-                          }`}
-                        />
-                      ))}
-                    </span>
-                    <span className="text-xs font-medium">{activeBudgetLabel}</span>
-                  </button>
+                      <Brain
+                        className={`h-4 w-4 ${
+                          provider === 'claude' && !isUltrathink ? 'opacity-70' : ''
+                        }`}
+                      />
+                      {provider === 'claude' ? (
+                        isUltrathink ? (
+                          <span className="text-xs font-medium">Ultrathink</span>
+                        ) : null
+                      ) : (
+                        <>
+                          <span
+                            className="flex flex-col-reverse items-center justify-center"
+                            style={{ gap: `${dotGap}px` }}
+                            aria-hidden="true"
+                          >
+                            {Array.from({ length: dotCount }).map((_, idx) => (
+                              <span
+                                key={`thinking-dot-${idx}`}
+                                style={{ width: `${dotSize}px`, height: `${dotSize}px` }}
+                                className={`rounded-full ${
+                                  idx <= activeBudgetIndex ? 'bg-current' : 'bg-muted-foreground/30'
+                                }`}
+                              />
+                            ))}
+                          </span>
+                          <span className="text-xs font-medium">{activeBudgetLabel}</span>
+                        </>
+                      )}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
