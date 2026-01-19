@@ -423,7 +423,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
     !hasNoDevices;
   const displayMode: 'running' | 'new' =
     selectedTarget?.mode ?? (runningSimulators.length > 0 ? 'running' : 'new');
-  const actionLabel = 'Run';
+  const actionLabel = displayMode === 'running' ? 'Rebuild' : 'Run';
   const actionHint = displayMode === 'running' ? 'Running' : 'New';
   const ActionIcon = Play;
   const actionChipLabel =
@@ -679,10 +679,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
           {isInitialLoading ? (
             <div className="flex h-7 flex-1 items-center px-3 text-xs text-muted-foreground">
               <Spinner size="sm" className="mr-1.5 h-3.5 w-3.5" />
-              <span>Loading</span>
-              <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {actionChipLabel}
-              </span>
+              <span>{actionChipLabel}</span>
             </div>
           ) : emptyState ? (
             <div className="flex h-7 flex-1 items-center gap-2 px-3 text-xs text-muted-foreground">
@@ -734,7 +731,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
               <Button
                 type="button"
                 variant="ghost"
-                className="h-7 rounded-none rounded-l-md px-3 text-xs"
+                className="h-7 rounded-none rounded-l-md border-0 px-3 text-xs"
                 title={actionTitle}
                 onMouseEnter={() => setIsActionHovered(true)}
                 onMouseLeave={() => setIsActionHovered(false)}
@@ -748,41 +745,34 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                   <ActionVisualIcon className="mr-1.5 h-3.5 w-3.5" />
                 ) : null}
                 <span>{actionText}</span>
-                <span className="ml-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {actionChipLabel}
-                </span>
               </Button>
-              <div className="h-6 w-px bg-border/70" />
               {showSchemeSelect ? (
-                <>
-                  <Select
-                    value={resolvedScheme ?? undefined}
-                    onValueChange={(value) => {
-                      storeScheme(value);
-                    }}
-                    disabled={isBusy || snapshot.status === 'loading'}
+                <Select
+                  value={resolvedScheme ?? undefined}
+                  onValueChange={(value) => {
+                    storeScheme(value);
+                  }}
+                  disabled={isBusy || snapshot.status === 'loading'}
+                >
+                  <SelectTrigger
+                    aria-label="Xcode scheme"
+                    className="h-7 w-[150px] shrink-0 rounded-none border-0 border-l border-border/70 bg-transparent px-2 text-xs shadow-none"
                   >
-                    <SelectTrigger
-                      aria-label="Xcode scheme"
-                      className="h-7 w-[150px] shrink-0 rounded-none border-none bg-transparent px-2 text-xs shadow-none"
-                    >
-                      <SelectValue placeholder={schemePlaceholder} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                          Scheme
-                        </div>
-                        {snapshot.schemes.map((scheme: string) => (
-                          <SelectItem key={scheme} value={scheme} className="text-xs">
-                            {scheme}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <div className="h-6 w-px bg-border/70" />
-                </>
+                    <SelectValue placeholder={schemePlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
+                        Scheme
+                      </div>
+                      {snapshot.schemes.map((scheme: string) => (
+                        <SelectItem key={scheme} value={scheme} className="text-xs">
+                          {scheme}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               ) : null}
               <Select
                 value={targetId ?? undefined}
@@ -794,14 +784,29 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
               >
                 <SelectTrigger
                   aria-label="Simulator"
-                  className="h-7 min-w-[180px] max-w-[260px] flex-1 rounded-none border-none bg-transparent px-2 text-xs shadow-none"
+                  className="h-7 min-w-[180px] max-w-[260px] flex-1 rounded-none rounded-r-md border-0 border-l border-border/70 bg-transparent px-2 text-xs shadow-none"
                 >
-                  <SelectValue placeholder={devicePlaceholder} />
+                  {selectedDevice ? (
+                    <span className="flex items-center">
+                      {displayMode === 'running' ? (
+                        <span className="mr-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          existing
+                        </span>
+                      ) : (
+                        <span className="mr-1.5 rounded-sm border border-border/70 bg-muted/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          new
+                        </span>
+                      )}
+                      <span>{selectedDevice.name}</span>
+                    </span>
+                  ) : (
+                    <SelectValue placeholder={devicePlaceholder} />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                      Running
+                      Running Simulators
                     </div>
                     {runningSimulators.length === 0 ? (
                       <SelectItem value="running:none" disabled className="text-xs">
@@ -816,7 +821,7 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
                   </SelectGroup>
                   <SelectGroup>
                     <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">
-                      New
+                      New Simulator
                     </div>
                     {newSimulators.map((device) => (
                       <SelectItem key={`new:${device.udid}`} value={`new::${device.udid}`}>
