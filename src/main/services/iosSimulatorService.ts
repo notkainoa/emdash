@@ -3,6 +3,16 @@ import { promises as fs } from 'fs';
 import { basename, join } from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { log } from '../lib/logger';
+import type {
+  IosSimRuntime,
+  IosSimDevice,
+  IosXcodeContainer,
+  IosSimulatorDetectResult,
+  IosSimulatorLaunchResult,
+  IosSimulatorBuildRunResult,
+  IosSimulatorSnapshotResult,
+} from '../../shared/types/ios-simulator';
 
 type CommandResult = {
   ok: boolean;
@@ -13,23 +23,9 @@ type CommandResult = {
   cancelled?: boolean;
 };
 
-type SimRuntime = {
-  identifier: string;
-  name: string;
-  platform?: string;
-  version?: string;
-  isAvailable?: boolean;
-};
-
-type SimDevice = {
-  name: string;
-  udid: string;
-  state: string;
-  isAvailable: boolean;
-  runtime: SimRuntime;
-  isIphone: boolean;
-  modelNumber: number;
-};
+// Local aliases for shared types (runtime has additional isAvailable field for internal parsing)
+type SimRuntime = IosSimRuntime & { isAvailable?: boolean };
+type SimDevice = IosSimDevice;
 
 type SimListResult = {
   ok: boolean;
@@ -39,26 +35,9 @@ type SimListResult = {
   stage?: string;
 };
 
-type SimLaunchResult = {
-  ok: boolean;
-  positioned?: boolean;
-  error?: string;
-  stage?: string;
-};
+type SimLaunchResult = IosSimulatorLaunchResult;
 
-type SnapshotResult = {
-  ok: boolean;
-  isIosProject?: boolean;
-  container?: XcodeContainer;
-  devices?: SimDevice[];
-  booted?: SimDevice[];
-  bestUdid?: string | null;
-  schemes?: string[];
-  defaultScheme?: string | null;
-  error?: string;
-  stage?: string;
-  details?: { stdout?: string; stderr?: string; logPath?: string };
-};
+type SnapshotResult = IosSimulatorSnapshotResult;
 
 type SimulatorCache = {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -70,34 +49,16 @@ type SimulatorCache = {
   lastUpdated: number;
 };
 
-type BuildRunResult = {
-  ok: boolean;
-  stage?: string;
-  error?: string;
-  details?: { stdout?: string; stderr?: string; logPath?: string };
-  scheme?: string;
-  bundleId?: string;
-  appPath?: string;
-  derivedDataPath?: string;
-};
+type BuildRunResult = IosSimulatorBuildRunResult;
 
 type XcodeCheckResult = {
   ok: boolean;
   error?: string;
 };
 
-type XcodeContainer = {
-  type: 'workspace' | 'project';
-  path: string;
-};
+type XcodeContainer = IosXcodeContainer;
 
-type IosDetectResult = {
-  ok: boolean;
-  isIosProject?: boolean;
-  container?: XcodeContainer;
-  error?: string;
-  stage?: string;
-};
+type IosDetectResult = IosSimulatorDetectResult;
 
 const OUTPUT_LIMIT = 1024 * 1024;
 const MAX_PBXPROJ_READ = 512 * 1024;
@@ -110,6 +71,7 @@ const CONTAINER_CACHE_TTL_MS = 10 * 60 * 1000;
 const IOS_HINT_CACHE_TTL_MS = 10 * 60 * 1000;
 const SIM_POLL_INTERVAL_MS = 15000;
 const SIM_POLL_MIN_REFRESH_MS = 3000;
+const MAX_CACHE_ENTRIES = 50;
 
 const IOS_PBXPROJ_HINTS = [
   'SDKROOT = iphoneos',
@@ -156,7 +118,27 @@ const schemeCache = new Map<
   }
 >();
 
-const startIosSimulatorTask = () => {
+/**
+ * Prune cache to prevent unbounded memory growth.
+ * Removes oldest entries (by timestamp) when cache exceeds maxSize.
+ */
+const pruneCache = <T extends { timestamp: number }>(cache: Map<string, T>, maxSize: number) => {
+  if (cache.size <= maxSize) return;
+  const entries = Array.from(cache.entries());
+  entries
+    .sort((a, b) => a[1].timestamp - b[1].timestamp)
+    .slice(0, cache.size - maxSize)
+    .forEach(([key]) => cache.delete(key));
+};
+
+/**
+ * Start a new iOS simulator task.
+ * Returns a unique taskId on success, or null if a task is already in progress.
+ */
+const startIosSimulatorTask = (): number | null => {
+  if (activeTaskId !== null) {
+    return null; // Task already in progress
+  }
   cancelRequested = false;
   activeTaskId = Date.now() + Math.random();
   return activeTaskId;
@@ -261,7 +243,9 @@ export const cancelIosSimulatorTask = () => {
     activeCommand.cancelled = true;
     try {
       activeCommand.child.kill();
-    } catch {}
+    } catch (err) {
+      log.debug('Failed to kill simulator process:', err);
+    }
     return true;
   }
   return activeTaskId !== null;
@@ -387,9 +371,12 @@ const fileHasIosHints = async (filePath: string) => {
       hasHints = IOS_PBXPROJ_HINTS.some((hint) => fullContent.includes(hint));
     }
     iosHintCache.set(filePath, { timestamp: Date.now(), result: hasHints });
+    pruneCache(iosHintCache, MAX_CACHE_ENTRIES);
     return hasHints;
-  } catch {
+  } catch (err) {
+    log.debug('Error reading file for iOS hints:', filePath, err);
     iosHintCache.set(filePath, { timestamp: Date.now(), result: false });
+    pruneCache(iosHintCache, MAX_CACHE_ENTRIES);
     return false;
   }
 };
@@ -409,7 +396,9 @@ const findDirectXcodeContainer = async (rootPath: string): Promise<XcodeContaine
     if (projects[0]) {
       return { type: 'project', path: join(rootPath, projects[0]) };
     }
-  } catch {}
+  } catch (err) {
+    log.debug('Error reading directory for Xcode container:', rootPath, err);
+  }
   return null;
 };
 
@@ -428,7 +417,9 @@ const findXcodeContainer = async (projectPath: string): Promise<XcodeContainer |
         if (!entry.isDirectory()) continue;
         candidates.push(join(bucket, entry.name, 'ios'));
       }
-    } catch {}
+    } catch (err) {
+      log.debug('Error reading bucket directory:', bucket, err);
+    }
   }
 
   let result: XcodeContainer | null = null;
@@ -438,6 +429,7 @@ const findXcodeContainer = async (projectPath: string): Promise<XcodeContainer |
   }
 
   containerCache.set(projectPath, { timestamp: Date.now(), result });
+  pruneCache(containerCache, MAX_CACHE_ENTRIES);
   return result;
 };
 
@@ -504,7 +496,9 @@ const readXcodeSchemesFromFilesystem = async (container: XcodeContainer) => {
         schemes.add(entry.name.replace(/\.xcscheme$/i, ''));
       }
     }
-  } catch {}
+  } catch (err) {
+    log.debug('Error reading shared Xcode schemes:', sharedPath, err);
+  }
 
   try {
     const userEntries = await fs.readdir(userRoot, { withFileTypes: true });
@@ -518,9 +512,13 @@ const readXcodeSchemesFromFilesystem = async (container: XcodeContainer) => {
             schemes.add(schemeEntry.name.replace(/\.xcscheme$/i, ''));
           }
         }
-      } catch {}
+      } catch (err) {
+        log.debug('Error reading user Xcode schemes:', userSchemesPath, err);
+      }
     }
-  } catch {}
+  } catch (err) {
+    log.debug('Error reading Xcode user data:', userRoot, err);
+  }
 
   return Array.from(schemes).sort((a, b) => a.localeCompare(b));
 };
@@ -589,6 +587,7 @@ const getXcodeSchemeList = async (
   const cachedContainer = containerCache.get(projectPath);
   if (!cachedContainer || cachedContainer.result?.path !== resolved.path) {
     containerCache.set(projectPath, { timestamp: Date.now(), result: resolved });
+    pruneCache(containerCache, MAX_CACHE_ENTRIES);
   }
 
   const fsSchemes = await readXcodeSchemesFromFilesystem(resolved);
@@ -600,6 +599,7 @@ const getXcodeSchemeList = async (
       container: resolved,
     };
     schemeCache.set(cacheKey, { timestamp: Date.now(), result });
+    pruneCache(schemeCache, MAX_CACHE_ENTRIES);
     return result;
   }
 
@@ -636,6 +636,7 @@ const getXcodeSchemeList = async (
 
   const result = { ok: true, schemes, listJson, container: resolved };
   schemeCache.set(cacheKey, { timestamp: Date.now(), result });
+  pruneCache(schemeCache, MAX_CACHE_ENTRIES);
   return result;
 };
 
@@ -894,6 +895,9 @@ export async function launchSimulator(udid: string): Promise<SimLaunchResult> {
   }
 
   const taskId = startIosSimulatorTask();
+  if (taskId === null) {
+    return { ok: false, error: 'A simulator task is already in progress.', stage: 'busy' };
+  }
   try {
     const bootRes = await runCommand('xcrun', ['simctl', 'bootstatus', udid, '-b'], {
       taskId,
@@ -960,7 +964,8 @@ const ensureDirectory = async (dirPath: string) => {
   try {
     await fs.mkdir(dirPath, { recursive: true });
     return true;
-  } catch {
+  } catch (err) {
+    log.debug('Failed to create directory:', dirPath, err);
     return false;
   }
 };
@@ -992,6 +997,9 @@ export async function buildAndRunIosApp(
   }
 
   const taskId = startIosSimulatorTask();
+  if (taskId === null) {
+    return { ok: false, error: 'A simulator task is already in progress.', stage: 'busy' };
+  }
   try {
     const stats = await fs.stat(projectPath);
     if (!stats.isDirectory()) {
@@ -1070,7 +1078,9 @@ export async function buildAndRunIosApp(
           logPath,
           [args.details?.stdout, args.details?.stderr].filter(Boolean).join('\n')
         );
-      } catch {}
+      } catch (err) {
+        log.debug('Failed to write failure log:', logPath, err);
+      }
       return {
         ok: false,
         stage: args.stage,
@@ -1171,3 +1181,16 @@ export async function buildAndRunIosApp(
     finishIosSimulatorTask(taskId);
   }
 }
+
+/**
+ * Clean up all iOS simulator resources.
+ * Should be called on app quit to prevent resource leaks.
+ */
+export const cleanupIosSimulator = () => {
+  if (simPollInterval) {
+    clearInterval(simPollInterval);
+    simPollInterval = null;
+  }
+  simPollRefCount = 0;
+  cancelIosSimulatorTask();
+};

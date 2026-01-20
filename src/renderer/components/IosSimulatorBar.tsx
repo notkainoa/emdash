@@ -12,21 +12,14 @@ import {
 } from './ui/select';
 import { Spinner } from './ui/spinner';
 import { useToast } from '../hooks/use-toast';
+import type { IosSimDevice, IosXcodeContainer } from '@shared/types/ios-simulator';
 
-type SimulatorDevice = {
-  name: string;
-  udid: string;
-  state: string;
-  isAvailable: boolean;
-  runtime: { identifier: string; name: string; platform?: string; version?: string };
-  isIphone: boolean;
-  modelNumber: number;
-};
+type SimulatorDevice = IosSimDevice;
 
 type SnapshotState = {
   status: 'idle' | 'loading' | 'ready' | 'error';
   isIosProject: boolean;
-  container?: { type: 'workspace' | 'project'; path: string } | null;
+  container?: IosXcodeContainer | null;
   devices: SimulatorDevice[];
   booted: SimulatorDevice[];
   bestUdid: string | null;

@@ -102,6 +102,7 @@ import { registerAllIpc } from './ipc';
 import { databaseService } from './services/DatabaseService';
 import { connectionsService } from './services/ConnectionsService';
 import { autoUpdateService } from './services/AutoUpdateService';
+import { cleanupIosSimulator } from './services/iosSimulatorService';
 import * as telemetry from './telemetry';
 import { errorTracking } from './errorTracking';
 import { join } from 'path';
@@ -235,6 +236,9 @@ registerAppLifecycle();
 
 // Graceful shutdown telemetry event
 app.on('before-quit', () => {
+  // Cleanup iOS simulator resources
+  cleanupIosSimulator();
+
   // Session summary with duration (no identifiers)
   telemetry.capture('app_session');
   telemetry.capture('app_closed');
