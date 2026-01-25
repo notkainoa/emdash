@@ -10,6 +10,9 @@ import {
   Clipboard,
   Copy,
   FileText,
+  Infinity,
+  Map as MapIcon,
+  MessageSquare,
   Paperclip,
   Pencil,
   Plus,
@@ -546,6 +549,7 @@ const AcpChatInterface: React.FC<Props> = ({
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
   const [isUltrathink, setIsUltrathink] = useState(false);
+  const [agentMode, setAgentMode] = useState<'ask' | 'plan' | 'agent'>('agent');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -2522,6 +2526,33 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               ) : null}
               <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3">
                 <div className="flex items-center gap-2">
+                  {/* Mode selector */}
+                  <Select value={agentMode} onValueChange={(v) => setAgentMode(v as 'ask' | 'plan' | 'agent')}>
+                    <SelectTrigger className="h-8 w-auto gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ask">
+                        <span className="flex items-center gap-2">
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          Ask
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="plan">
+                        <span className="flex items-center gap-2">
+                          <MapIcon className="h-3.5 w-3.5" />
+                          Plan
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="agent">
+                        <span className="flex items-center gap-2">
+                          <Infinity className="h-3.5 w-3.5" />
+                          Agent
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {/* Model selector */}
                   <Select value={resolvedModelValue} onValueChange={handleModelChange}>
                     <SelectTrigger
                       disabled={!canSetModel || modelOptions.length === 0}
