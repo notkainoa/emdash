@@ -63,7 +63,7 @@ type IosDetectResult = IosSimulatorDetectResult;
 const OUTPUT_LIMIT = 1024 * 1024;
 const MAX_PBXPROJ_READ = 512 * 1024;
 const MAX_PBXPROJ_FULL_READ = 5 * 1024 * 1024;
-const BOOT_WAIT_MS = 10000;
+const BOOT_WAIT_MS = 30000;
 const CANCELLED_MESSAGE = 'Cancelled';
 const SCHEME_CACHE_TTL_MS = 10 * 60 * 1000;
 const SIM_LIST_CACHE_TTL_MS = 800;
@@ -342,6 +342,27 @@ const extractJson = (stdout: string, stderr: string) => {
   return null;
 };
 
+const extractXcodebuildError = (stdout: string, stderr: string): string | null => {
+  const combined = [stderr, stdout].filter(Boolean).join('\n');
+  if (!combined) return null;
+  const lines = combined
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const errorLines = lines.filter((line) => /\berror:/.test(line));
+  if (errorLines.length > 0) {
+    return errorLines[errorLines.length - 1];
+  }
+  const platformLine = lines.find((line) =>
+    line.includes('Supported platforms for the buildables in the current scheme is empty')
+  );
+  if (platformLine) return platformLine;
+  if (lines.some((line) => line.includes('BUILD FAILED'))) {
+    return 'Build failed.';
+  }
+  return null;
+};
+
 const isTestScheme = (name: string) => {
   const lowered = name.toLowerCase();
   return /\bui\s*tests?\b/.test(lowered) || /\btests?\b/.test(lowered);
@@ -526,7 +547,8 @@ const readXcodeSchemesFromFilesystem = async (container: XcodeContainer) => {
 const readBuildSettings = async (
   projectPath: string,
   container: XcodeContainer,
-  scheme: string
+  scheme: string,
+  opts?: { taskId?: number }
 ): Promise<{
   ok: boolean;
   settings?: string;
@@ -540,7 +562,11 @@ const readBuildSettings = async (
     '-scheme',
     scheme,
   ];
-  const res = await runCommand('xcodebuild', args, { cwd: projectPath, timeoutMs: 10000 });
+  const res = await runCommand('xcodebuild', args, {
+    cwd: projectPath,
+    timeoutMs: 10000,
+    taskId: opts?.taskId,
+  });
   if (!res.ok) {
     return {
       ok: false,
@@ -1055,16 +1081,6 @@ export async function buildAndRunIosApp(
       return { ok: false, error: CANCELLED_MESSAGE, stage: 'cancelled' };
     }
 
-    const { derivedDataDir } = buildDerivedDataPaths(projectPath);
-    const derivedDataReady = await ensureDirectory(derivedDataDir);
-    if (!derivedDataReady) {
-      return {
-        ok: false,
-        error: 'Failed to prepare build directory.',
-        stage: 'build',
-      };
-    }
-
     const fail = async (args: {
       stage: string;
       error: string;
@@ -1089,6 +1105,33 @@ export async function buildAndRunIosApp(
         scheme: selectedScheme ?? undefined,
       };
     };
+
+    const settingsRes = await readBuildSettings(projectPath, container, selectedScheme, {
+      taskId,
+    });
+    if (!settingsRes.ok) {
+      return await fail({
+        stage: settingsRes.error === CANCELLED_MESSAGE ? 'cancelled' : 'build-settings',
+        error: settingsRes.error || 'Failed to read build settings.',
+        details: settingsRes.details,
+      });
+    }
+    if (!buildSettingsHasIosPlatform(settingsRes.settings)) {
+      return await fail({
+        stage: 'schemes',
+        error: `Scheme "${selectedScheme}" does not support iOS Simulator. Select another scheme.`,
+      });
+    }
+
+    const { derivedDataDir } = buildDerivedDataPaths(projectPath);
+    const derivedDataReady = await ensureDirectory(derivedDataDir);
+    if (!derivedDataReady) {
+      return {
+        ok: false,
+        error: 'Failed to prepare build directory.',
+        stage: 'build',
+      };
+    }
 
     const buildArgs = [
       container.type === 'workspace' ? '-workspace' : '-project',
@@ -1121,11 +1164,12 @@ export async function buildAndRunIosApp(
 
     const buildRes = await runCommand('xcodebuild', buildArgs, { cwd: projectPath, taskId });
     if (!buildRes.ok) {
+      const parsedError = extractXcodebuildError(buildRes.stdout, buildRes.stderr);
       return await fail({
         stage: buildRes.cancelled ? 'cancelled' : 'build',
         error: buildRes.cancelled
           ? CANCELLED_MESSAGE
-          : buildRes.stderr || buildRes.error || 'Build failed.',
+          : parsedError || buildRes.stderr || buildRes.error || 'Build failed.',
         details: { stdout: buildRes.stdout, stderr: buildRes.stderr },
       });
     }

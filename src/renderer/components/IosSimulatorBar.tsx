@@ -401,9 +401,14 @@ const IosSimulatorBar: React.FC<IosSimulatorBarProps> = ({ projectPath, taskPath
   }, [schemeStorageKey, snapshot.defaultScheme, snapshot.schemes]);
   const isInitialLoading = detectState.isIosProject && snapshot.status === 'loading';
   const needsSchemeSelection = snapshot.schemes.length > 1 && !resolvedScheme;
-  const hasSchemeError = snapshot.status === 'error' && snapshot.stage === 'schemes';
+  const hasSchemeError =
+    snapshot.status === 'error' &&
+    (snapshot.stage === 'schemes' || snapshot.stage === 'build-settings');
   const hasDeviceError =
-    snapshot.status === 'error' && snapshot.stage !== 'schemes' && snapshot.stage !== 'build';
+    snapshot.status === 'error' &&
+    snapshot.stage !== 'schemes' &&
+    snapshot.stage !== 'build-settings' &&
+    snapshot.stage !== 'build';
   const showSchemeSelect = snapshot.schemes.length > 1 || snapshot.status !== 'ready';
   const hasNoDevices = snapshot.status === 'ready' && snapshot.devices.length === 0;
   const hasCopyableError = Boolean(snapshot.error || snapshot.details?.stderr);
