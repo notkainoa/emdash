@@ -2,7 +2,6 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { ExternalLink, Globe, Database, Server, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import ContainerStatusBadge from './ContainerStatusBadge';
-import { useToast } from '../hooks/use-toast';
 import { useTheme } from '../hooks/useTheme';
 import { TerminalPane } from './TerminalPane';
 import InstallBanner from './InstallBanner';
@@ -45,7 +44,6 @@ const ChatInterface: React.FC<Props> = ({
   className,
   initialProvider,
 }) => {
-  const { toast } = useToast();
   const { effectiveTheme } = useTheme();
   const [isProviderInstalled, setIsProviderInstalled] = useState<boolean | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<
@@ -74,10 +72,12 @@ const ChatInterface: React.FC<Props> = ({
     () => `${useAcpChat ? 'acp' : 'cli'}:${provider}`,
     [useAcpChat, provider]
   );
+  const planModeDisabled = useAcpChat && provider !== 'codex';
   const { enabled: planEnabled, setEnabled: setPlanEnabled } = usePlanMode(
     task.id,
     task.path,
-    planScope
+    planScope,
+    { disabled: planModeDisabled }
   );
 
   // Log transitions for visibility

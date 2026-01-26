@@ -3,12 +3,23 @@ import { PLANNING_MD } from '@/lib/planRules';
 import { log } from '@/lib/logger';
 import { logPlanEvent } from '@/lib/planLogs';
 
-export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
+type PlanModeOptions = {
+  disabled?: boolean;
+};
+
+export function usePlanMode(
+  taskId: string,
+  taskPath: string,
+  scope?: string,
+  options: PlanModeOptions = {}
+) {
+  const disabled = options.disabled ?? false;
   const key = useMemo(
     () => `planMode:${taskId}${scope ? `:${scope}` : ''}`,
     [taskId, scope]
   );
   const [enabled, setEnabled] = useState<boolean>(() => {
+    if (disabled) return false;
     try {
       return localStorage.getItem(key) === '1';
     } catch {
@@ -18,16 +29,21 @@ export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
   const skipPersistRef = useRef(false);
 
   useEffect(() => {
+    if (disabled) {
+      setEnabled(false);
+      return;
+    }
     skipPersistRef.current = true;
     try {
       setEnabled(localStorage.getItem(key) === '1');
     } catch {
       setEnabled(false);
     }
-  }, [key]);
+  }, [disabled, key]);
 
   // Persist flag
   useEffect(() => {
+    if (disabled) return;
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
       return;
@@ -36,7 +52,7 @@ export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
       if (enabled) localStorage.setItem(key, '1');
       else localStorage.removeItem(key);
     } catch {}
-  }, [enabled, key]);
+  }, [disabled, enabled, key]);
 
   const ensurePlanFile = useCallback(async () => {
     try {
@@ -166,9 +182,50 @@ export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
     }
   }, [taskPath]);
 
+  const cleanupPlanMode = useCallback(async () => {
+    // Only perform disable cleanup if there is evidence plan mode was active
+    let wasActive = false;
+    try {
+      const hiddenRel = '.emdash/planning.md';
+      const lockRel = '.emdash/.planlock.json';
+      const metaRel = '.emdash/planning.meta.json';
+      const a = await (window as any).electronAPI.fsRead?.(taskPath, hiddenRel, 1);
+      const b = await (window as any).electronAPI.fsRead?.(taskPath, lockRel, 1);
+      const c = await (window as any).electronAPI.fsRead?.(taskPath, metaRel, 1);
+      wasActive = !!(a?.success || b?.success || c?.success);
+    } catch {}
+
+    if (!wasActive) return;
+    log.info('[plan] disabled', { taskId, taskPath });
+    await logPlanEvent(taskPath, 'Plan Mode disabled');
+    void (async () => {
+      const { captureTelemetry } = await import('../lib/telemetryClient');
+      captureTelemetry('plan_mode_disabled');
+    })();
+    try {
+      const unlock = await (window as any).electronAPI.planReleaseLock(taskPath);
+      if (!unlock?.success) log.warn('[plan] failed to release lock', unlock?.error);
+      else
+        await logPlanEvent(
+          taskPath,
+          `Released read-only lock (restored=${unlock.restored ?? 0})`
+        );
+    } catch (e) {
+      log.warn('[plan] planReleaseLock error', e);
+    }
+    removePlanFile();
+  }, [removePlanFile, taskId, taskPath]);
+
   // Side effects on enable/disable
   useEffect(() => {
     (async () => {
+      if (disabled) {
+        if (enabled) {
+          setEnabled(false);
+        }
+        await cleanupPlanMode();
+        return;
+      }
       if (enabled) {
         log.info('[plan] enabled', { taskId, taskPath });
         await logPlanEvent(taskPath, 'Plan Mode enabled');
@@ -187,43 +244,27 @@ export function usePlanMode(taskId: string, taskPath: string, scope?: string) {
           log.warn('[plan] planApplyLock error', e);
         }
       } else {
-        // Only perform disable cleanup if there is evidence plan mode was active
-        let wasActive = false;
-        try {
-          const hiddenRel = '.emdash/planning.md';
-          const lockRel = '.emdash/.planlock.json';
-          const metaRel = '.emdash/planning.meta.json';
-          const a = await (window as any).electronAPI.fsRead?.(taskPath, hiddenRel, 1);
-          const b = await (window as any).electronAPI.fsRead?.(taskPath, lockRel, 1);
-          const c = await (window as any).electronAPI.fsRead?.(taskPath, metaRel, 1);
-          wasActive = !!(a?.success || b?.success || c?.success);
-        } catch {}
-
-        if (wasActive) {
-          log.info('[plan] disabled', { taskId, taskPath });
-          await logPlanEvent(taskPath, 'Plan Mode disabled');
-          void (async () => {
-            const { captureTelemetry } = await import('../lib/telemetryClient');
-            captureTelemetry('plan_mode_disabled');
-          })();
-          try {
-            const unlock = await (window as any).electronAPI.planReleaseLock(taskPath);
-            if (!unlock?.success) log.warn('[plan] failed to release lock', unlock?.error);
-            else
-              await logPlanEvent(
-                taskPath,
-                `Released read-only lock (restored=${unlock.restored ?? 0})`
-              );
-          } catch (e) {
-            log.warn('[plan] planReleaseLock error', e);
-          }
-          removePlanFile();
-        }
+        await cleanupPlanMode();
       }
     })();
-  }, [enabled, ensureGitExclude, ensurePlanFile, removePlanFile, taskId, taskPath]);
+  }, [cleanupPlanMode, disabled, enabled, ensureGitExclude, ensurePlanFile, taskId, taskPath]);
 
-  const toggle = useCallback(() => setEnabled((v) => !v), []);
+  const setEnabledSafe = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      if (disabled) return;
+      setEnabled(next);
+    },
+    [disabled]
+  );
 
-  return { enabled, setEnabled, toggle } as const;
+  const toggle = useCallback(() => {
+    if (disabled) return;
+    setEnabled((v) => !v);
+  }, [disabled]);
+
+  return {
+    enabled: disabled ? false : enabled,
+    setEnabled: setEnabledSafe,
+    toggle,
+  } as const;
 }

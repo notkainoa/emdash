@@ -27,6 +27,12 @@ type PromptCaps = {
   embeddedContext?: boolean;
 };
 
+type AcpMode = {
+  id?: string;
+  name?: string;
+  description?: string;
+};
+
 export type AcpSessionState = {
   taskId: string;
   providerId: string;
@@ -39,6 +45,8 @@ export type AcpSessionState = {
   runElapsedMs: number;
   promptCaps: PromptCaps;
   configOptions: AcpConfigOption[];
+  modes: AcpMode[];
+  currentModeId: string | null;
   models: AcpModel[];
   currentModelId: string | null;
   feed: FeedItem[];
@@ -105,6 +113,26 @@ const normalizePromptCaps = (caps: any): PromptCaps => ({
   ),
 });
 
+const normalizeModes = (payload: any): AcpMode[] => {
+  if (!payload) return [];
+  if (Array.isArray(payload.modes)) return payload.modes;
+  if (Array.isArray(payload.availableModes)) return payload.availableModes;
+  if (payload.modes && Array.isArray(payload.modes.availableModes)) return payload.modes.availableModes;
+  return [];
+};
+
+const normalizeCurrentModeId = (payload: any): string | null => {
+  const candidate =
+    payload?.currentModeId ??
+    payload?.modeId ??
+    payload?.current_mode_id ??
+    payload?.modes?.currentModeId ??
+    payload?.modes?.modeId ??
+    payload?.modes?.current_mode_id;
+  if (candidate === undefined || candidate === null || candidate === '') return null;
+  return String(candidate);
+};
+
 const optionMatchesConfigId = (option: AcpConfigOption, configId: string) => {
   const candidate =
     (option as any)?.id ??
@@ -129,6 +157,8 @@ const createEmptyState = (taskId: string, providerId: string): AcpSessionState =
   runElapsedMs: 0,
   promptCaps: {},
   configOptions: [],
+  modes: [],
+  currentModeId: null,
   models: [],
   currentModelId: null,
   feed: [],
@@ -753,6 +783,12 @@ const handleSessionUpdate = (record: AcpSessionRecord, update: any) => {
   const updateType = (update.sessionUpdate as string) || (update.type as string) || (update.kind as string);
   if (!updateType) return;
   handleConfigAndModelUpdates(record, update);
+  if (updateType === 'current_mode_update') {
+    const currentModeId = normalizeCurrentModeId(update);
+    if (!currentModeId) return;
+    updateState(record, (prev) => ({ ...prev, sessionError: null, currentModeId }));
+    return;
+  }
   if (
     updateType === 'config_option_update' ||
     updateType === 'config_options_update' ||
@@ -906,12 +942,16 @@ const handleAcpEvent = (payload: any) => {
   const record = getOrCreateRecord(taskId, providerId);
 
   if (payload.type === 'session_started') {
+    const nextModes = normalizeModes(payload);
+    const nextCurrentModeId = normalizeCurrentModeId(payload);
     updateState(record, (prev) => ({
       ...prev,
       sessionError: null,
       sessionStarting: false,
       status: 'ready',
       sessionId: payload.sessionId || prev.sessionId,
+      modes: nextModes.length ? nextModes : prev.modes,
+      currentModeId: nextCurrentModeId ?? prev.currentModeId,
     }));
     const caps =
       payload.agentCapabilities?.promptCapabilities ??
@@ -1258,7 +1298,11 @@ const setMode = async (taskId: string, providerId: string, modeId: string) => {
   const record = getOrCreateRecord(taskId, providerId);
   if (!record.state.sessionId || !modeId) return { success: false, error: 'Session not ready' };
   const api: any = (window as any).electronAPI;
-  return api.acpSetMode({ sessionId: record.state.sessionId, modeId });
+  const res = await api.acpSetMode({ sessionId: record.state.sessionId, modeId });
+  if (res?.success) {
+    updateState(record, (prev) => ({ ...prev, currentModeId: modeId }));
+  }
+  return res;
 };
 
 const subscribe = (taskId: string, providerId: string, listener: () => void) => {

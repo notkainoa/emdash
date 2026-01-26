@@ -6,50 +6,11 @@ function isWindows() {
   return process.platform === 'win32';
 }
 
-function isSymlink(p: string) {
-  try {
-    const st = fs.lstatSync(p);
-    return st.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
 type Entry = { p: string; m: number };
 
-function collectPaths(root: string) {
-  const result: string[] = [];
-  const stack = ['.'];
-  while (stack.length) {
-    const rel = stack.pop()!;
-    const abs = path.join(root, rel);
-    if (isSymlink(abs)) continue;
-    let st: fs.Stats;
-    try {
-      st = fs.statSync(abs);
-    } catch {
-      continue;
-    }
-    if (st.isDirectory()) {
-      // Skip our internal folder so we can write logs/policies
-      if (rel === '.emdash' || rel.startsWith('.emdash' + path.sep)) continue;
-      result.push(rel);
-      let entries: string[] = [];
-      try {
-        entries = fs.readdirSync(abs);
-      } catch {
-        continue;
-      }
-      for (const e of entries) {
-        const nextRel = rel === '.' ? e : path.join(rel, e);
-        stack.push(nextRel);
-      }
-    } else if (st.isFile()) {
-      result.push(rel);
-    }
-  }
-  return result;
-}
+const YIELD_EVERY = 200;
+
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 function chmodNoWrite(mode: number, isDir: boolean): number {
   const noWrite = mode & ~0o222; // clear write bits
@@ -60,38 +21,77 @@ function chmodNoWrite(mode: number, isDir: boolean): number {
   return noWrite & 0o7777;
 }
 
-function applyLock(root: string): { success: boolean; changed: number; error?: string } {
+async function applyLock(
+  root: string
+): Promise<{ success: boolean; changed: number; error?: string }> {
   try {
-    const entries = collectPaths(root);
     const state: Entry[] = [];
     let changed = 0;
-    for (const rel of entries) {
+    const stack = ['.'];
+    let processed = 0;
+
+    while (stack.length) {
+      const rel = stack.pop()!;
       const abs = path.join(root, rel);
       let st: fs.Stats;
       try {
-        st = fs.statSync(abs);
+        st = await fs.promises.lstat(abs);
       } catch {
         continue;
       }
-      const isDir = st.isDirectory();
-      const prevMode = st.mode & 0o7777;
-      const nextMode = chmodNoWrite(prevMode, isDir);
-      if (nextMode !== prevMode) {
+      if (st.isSymbolicLink()) continue;
+
+      if (st.isDirectory()) {
+        // Skip our internal folder so we can write logs/policies
+        if (rel === '.emdash' || rel.startsWith(`.emdash${path.sep}`)) {
+          continue;
+        }
+        const prevMode = st.mode & 0o7777;
+        const nextMode = chmodNoWrite(prevMode, true);
+        if (nextMode !== prevMode) {
+          try {
+            await fs.promises.chmod(abs, nextMode);
+            state.push({ p: rel, m: prevMode });
+            changed++;
+          } catch {}
+        }
+
+        let entries: string[] = [];
         try {
-          fs.chmodSync(abs, nextMode);
-          state.push({ p: rel, m: prevMode });
-          changed++;
-        } catch {}
+          entries = await fs.promises.readdir(abs);
+        } catch {
+          continue;
+        }
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entry = entries[i];
+          const nextRel = rel === '.' ? entry : path.join(rel, entry);
+          stack.push(nextRel);
+        }
+      } else if (st.isFile()) {
+        const prevMode = st.mode & 0o7777;
+        const nextMode = chmodNoWrite(prevMode, false);
+        if (nextMode !== prevMode) {
+          try {
+            await fs.promises.chmod(abs, nextMode);
+            state.push({ p: rel, m: prevMode });
+            changed++;
+          } catch {}
+        }
+      }
+
+      processed++;
+      if (processed % YIELD_EVERY === 0) {
+        await yieldToEventLoop();
       }
     }
     // Persist lock state
     const baseDir = path.join(root, '.emdash');
     try {
-      fs.mkdirSync(baseDir, { recursive: true });
+      await fs.promises.mkdir(baseDir, { recursive: true });
     } catch {}
     const statePath = path.join(baseDir, '.planlock.json');
     try {
-      fs.writeFileSync(statePath, JSON.stringify(state), 'utf8');
+      await fs.promises.writeFile(statePath, JSON.stringify(state), 'utf8');
     } catch {}
     return { success: true, changed };
   } catch (e: any) {
@@ -99,29 +99,37 @@ function applyLock(root: string): { success: boolean; changed: number; error?: s
   }
 }
 
-function releaseLock(root: string): { success: boolean; restored: number; error?: string } {
+async function releaseLock(
+  root: string
+): Promise<{ success: boolean; restored: number; error?: string }> {
   try {
     const statePath = path.join(root, '.emdash', '.planlock.json');
-    if (!fs.existsSync(statePath)) return { success: true, restored: 0 };
     let raw = '';
     try {
-      raw = fs.readFileSync(statePath, 'utf8');
-    } catch {}
+      raw = await fs.promises.readFile(statePath, 'utf8');
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') return { success: true, restored: 0 };
+    }
     let entries: Entry[] = [];
     try {
       entries = JSON.parse(raw || '[]');
     } catch {}
     let restored = 0;
+    let processed = 0;
     for (const ent of entries) {
       try {
         const abs = path.join(root, ent.p);
-        fs.chmodSync(abs, ent.m);
+        await fs.promises.chmod(abs, ent.m);
         restored++;
       } catch {}
+      processed++;
+      if (processed % YIELD_EVERY === 0) {
+        await yieldToEventLoop();
+      }
     }
     // Cleanup state file
     try {
-      fs.unlinkSync(statePath);
+      await fs.promises.unlink(statePath);
     } catch {}
     return { success: true, restored };
   } catch (e: any) {

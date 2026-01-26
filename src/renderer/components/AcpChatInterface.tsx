@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  Clipboard,
   Copy,
   FileText,
   Infinity,
@@ -48,10 +47,10 @@ const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
 );
 
 import { AnimatePresence, motion } from 'motion/react';
-import { Badge } from './ui/badge';
 import { cn } from '@/lib/utils';
 import { useAcpSession } from '@/lib/acpSessions';
 import { formatClaudeModelOptionsForUi } from './acpModelFormatting';
+import { logPlanEvent } from '@/lib/planLogs';
 import {
   type ContentBlock,
   type DiffPreview,
@@ -64,7 +63,6 @@ import {
   truncateText,
 } from '@/lib/acpChatUtils';
 import type { AcpConfigOption } from '@shared/types/acp';
-import { logPlanEvent } from '@/lib/planLogs';
 
 type Attachment = {
   id: string;
@@ -166,6 +164,14 @@ type ModelOption = {
   label: string;
   description?: string;
 };
+
+type ModeOption = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type UiMode = 'ask' | 'plan' | 'agent';
 
 // Static models for instant loading (no waiting for IPC)
 const PROVIDER_MODELS: Record<string, ModelOption[]> = {
@@ -307,6 +313,18 @@ const formatModelLabel = (label: string): string => {
   });
   return formatted.join('-');
 };
+
+const formatModeLabel = (label: string): string => {
+  const spaced = label
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  if (!spaced) return label;
+  return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const normalizeModeToken = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 const splitModelId = (modelId?: string | null, label?: string | null) => {
   if (!modelId) {
@@ -483,6 +501,34 @@ const normalizeModelOption = (model: any): ModelOption | null => {
   return null;
 };
 
+const normalizeModeOption = (mode: any): ModeOption | null => {
+  if (!mode) return null;
+  if (typeof mode === 'string') {
+    const id = mode.trim();
+    if (!id) return null;
+    return { id, name: formatModeLabel(id) };
+  }
+  if (typeof mode === 'object') {
+    const id =
+      mode.id ??
+      mode.modeId ??
+      mode.mode_id ??
+      mode.value ??
+      mode.key ??
+      mode.name ??
+      mode.label ??
+      mode.title;
+    if (!id) return null;
+    const name = mode.name ?? mode.label ?? mode.title ?? formatModeLabel(String(id));
+    return {
+      id: String(id),
+      name: String(name),
+      description: mode.description ? String(mode.description) : undefined,
+    };
+  }
+  return null;
+};
+
 const nextBudgetLevel = (
   current: ThinkingBudgetLevel,
   levels: ThinkingBudgetLevel[]
@@ -523,6 +569,8 @@ const AcpChatInterface: React.FC<Props> = ({
     terminalOutputs,
     plan,
     promptCaps,
+    modes,
+    currentModeId,
     configOptions,
     models,
     currentModelId,
@@ -546,10 +594,67 @@ const AcpChatInterface: React.FC<Props> = ({
     const stored = readLocalStorage(planBannerStorageKey);
     return stored === '1';
   });
+  const normalizedModes = useMemo(
+    () => modes.map((mode) => normalizeModeOption(mode)).filter(Boolean) as ModeOption[],
+    [modes]
+  );
+  const resolveModeId = useCallback(
+    (tokens: string[], fallbackId?: string | null) => {
+      const normalizedTokens = tokens.map(normalizeModeToken);
+      for (const mode of normalizedModes) {
+        const haystack = normalizeModeToken(`${mode.id} ${mode.name}`);
+        if (normalizedTokens.some((token) => haystack.includes(token))) {
+          return mode.id;
+        }
+      }
+      return fallbackId ?? null;
+    },
+    [normalizedModes]
+  );
+  const currentModeLabel = useMemo(() => {
+    if (!currentModeId) return '';
+    const current = normalizedModes.find((mode) => mode.id === currentModeId);
+    return current?.name ?? '';
+  }, [currentModeId, normalizedModes]);
+  const matchesCurrentMode = useCallback(
+    (tokens: string[]) => {
+      if (!currentModeId && !currentModeLabel) return false;
+      const haystack = normalizeModeToken(`${currentModeId ?? ''} ${currentModeLabel}`);
+      return tokens.map(normalizeModeToken).some((token) => haystack.includes(token));
+    },
+    [currentModeId, currentModeLabel]
+  );
+  const claudeModeMap = useMemo(
+    () => ({
+      ask: resolveModeId(['default'], 'default'),
+      plan: resolveModeId(['plan'], 'plan'),
+      agent: resolveModeId(['bypasspermissions', 'bypass'], 'bypassPermissions'),
+    }),
+    [resolveModeId]
+  );
+  const codexModeMap = useMemo(
+    () => ({
+      ask: resolveModeId(['readonly', 'read'], 'read-only'),
+      plan: resolveModeId(['readonly', 'read'], 'read-only'),
+      agent: resolveModeId(['fullaccess', 'full'], 'full-access'),
+    }),
+    [resolveModeId]
+  );
+  const uiMode = useMemo<UiMode>(() => {
+    if (provider === 'codex') {
+      if (planModeEnabled) return 'plan';
+      if (matchesCurrentMode(['fullaccess', 'full'])) return 'agent';
+      return 'ask';
+    }
+    if (matchesCurrentMode(['plan'])) return 'plan';
+    if (matchesCurrentMode(['bypasspermissions', 'bypass'])) return 'agent';
+    return 'ask';
+  }, [matchesCurrentMode, planModeEnabled, provider]);
+  const isPlanMode = uiMode === 'plan';
+  const isCustomPlanMode = provider === 'codex' && planModeEnabled;
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
   const [isUltrathink, setIsUltrathink] = useState(false);
-  const [agentMode, setAgentMode] = useState<'ask' | 'plan' | 'agent'>('agent');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -915,9 +1020,9 @@ const AcpChatInterface: React.FC<Props> = ({
     if (!trimmed && attachments.length === 0) return;
     setInput('');
     forceScrollRef.current = true;
-    setLastUserPlanModeSent(planModeEnabled);
-    const includePlanInstruction = planModeEnabled && !planModePromptSent;
-    const promptBlocks = buildPromptBlocks(trimmed, planModeEnabled, includePlanInstruction);
+    const includePlanInstruction = isCustomPlanMode && !planModePromptSent;
+    setLastUserPlanModeSent(isCustomPlanMode);
+    const promptBlocks = buildPromptBlocks(trimmed, isCustomPlanMode, includePlanInstruction);
     if (includePlanInstruction) setPlanModePromptSent(true);
     setAttachments([]);
     setRunElapsedMs(0);
@@ -928,7 +1033,7 @@ const AcpChatInterface: React.FC<Props> = ({
   };
 
   const handleApprovePlan = async () => {
-    if (!planModeEnabled || !lastUserPlanModeSent) return;
+    if (!isCustomPlanMode || !lastUserPlanModeSent) return;
     const approvedText = 'approved';
     if (!sessionId || isRunning) {
       setPlanModeEnabled(false);
@@ -1013,7 +1118,7 @@ const AcpChatInterface: React.FC<Props> = ({
     }
   };
 
-  // Plan mode prompt constants
+  // Plan mode prompt constants (used for Codex custom plan mode)
   const PLAN_MODE_FULL_INSTRUCTION = `SYSTEM: PLAN MODE (READ-ONLY)
 
 You are in PLAN MODE. Your job is to research, analyze, and propose a plan. You must not take any action that changes the user's machine or repo.
@@ -1101,11 +1206,12 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
     const agentBlocks: ContentBlock[] = [];
     if (planMode) {
-      if (includePlanInstruction)
+      if (includePlanInstruction) {
         agentBlocks.push({ type: 'text', text: PLAN_MODE_FULL_INSTRUCTION });
-      else agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
+      } else {
+        agentBlocks.push({ type: 'text', text: PLAN_MODE_REMINDER });
+      }
     }
-
     agentBlocks.push(...displayBlocks);
 
     return { display: displayBlocks, agent: agentBlocks };
@@ -1160,8 +1266,18 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
   const showInlineToolLoading = isRunning && Boolean(latestToolCallId);
   const showBottomLoading = isRunning && !latestToolCallId;
+  const planBannerDescription = isCustomPlanMode
+    ? 'Ask questions and explore changes. When ready, approve the plan to apply modifications.'
+    : 'Ask questions and explore changes. Switch to Agent when you want to apply edits.';
+  const inputPlaceholder =
+    uiMode === 'plan'
+      ? 'Draft a plan (no changes).'
+      : uiMode === 'agent'
+        ? 'Tell me what to change.'
+        : 'Ask questions or explore.';
 
   const canSend = input.trim().length > 0 || attachments.length > 0;
+  const canSetMode = Boolean(sessionId);
   const modelConfigOption = useMemo(() => findModelConfigOption(configOptions), [configOptions]);
   const modelConfigId = useMemo(() => getConfigOptionId(modelConfigOption), [modelConfigOption]);
   const modelConfigChoices = useMemo(
@@ -1308,6 +1424,51 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     (Boolean(thinkingConfigId) ||
       Boolean(selectedModelEntry?.variants.length) ||
       Boolean(fallbackThinkingConfigId));
+
+  const handleModeChange = useCallback(
+    (value: UiMode) => {
+      if (!sessionId) return;
+      if (provider === 'codex') {
+        const shouldEnablePlan = value === 'plan';
+        if (planModeEnabled !== shouldEnablePlan) {
+          setPlanModeEnabled(shouldEnablePlan);
+        }
+        const targetModeId =
+          value === 'agent' ? codexModeMap.agent : codexModeMap.ask;
+        if (!targetModeId || targetModeId === currentModeId) return;
+        void sessionActions.setMode(targetModeId).then((res) => {
+          if (!res?.success) {
+            uiLog('mode:setFailed', { modeId: targetModeId, error: res?.error });
+          }
+        });
+        return;
+      }
+
+      const targetModeId =
+        value === 'plan'
+          ? claudeModeMap.plan
+          : value === 'agent'
+            ? claudeModeMap.agent
+            : claudeModeMap.ask;
+      if (!targetModeId || targetModeId === currentModeId) return;
+      void sessionActions.setMode(targetModeId).then((res) => {
+        if (!res?.success) {
+          uiLog('mode:setFailed', { modeId: targetModeId, error: res?.error });
+        }
+      });
+    },
+    [
+      claudeModeMap,
+      codexModeMap,
+      currentModeId,
+      planModeEnabled,
+      provider,
+      sessionActions,
+      sessionId,
+      setPlanModeEnabled,
+      uiLog,
+    ]
+  );
 
   const handleModelChange = useCallback(
     (value: string) => {
@@ -2075,7 +2236,6 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     <div
       className={cn(
         'flex h-full flex-col bg-white transition-colors duration-300 dark:bg-gray-900',
-        planModeEnabled && 'bg-sky-50/30 dark:bg-sky-950/20',
         className || ''
       )}
     >
@@ -2132,7 +2292,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
         {/* Plan Mode Info Banner */}
         <AnimatePresence initial={false}>
-          {planModeEnabled && !planBannerDismissed && (
+          {isPlanMode && !planBannerDismissed && (
             <motion.div
               initial={{ opacity: 0, height: 0, marginTop: 0 }}
               animate={{ opacity: 1, height: 'auto', marginTop: '0.75rem' }}
@@ -2141,10 +2301,10 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               className="px-6"
             >
               <div className="mx-auto max-w-4xl">
-                <div className="flex items-start gap-3 rounded-md border border-sky-200/60 bg-sky-50/80 px-3 py-2.5 text-xs shadow-sm dark:border-sky-700/40 dark:bg-sky-950/40">
+                <div className="flex items-start gap-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2.5 text-xs shadow-sm">
                   <div className="mt-0.5 flex-shrink-0">
                     <svg
-                      className="h-4 w-4 text-sky-600 dark:text-sky-400"
+                      className="h-4 w-4 text-muted-foreground"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -2159,13 +2319,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                     </svg>
                   </div>
                   <div className="flex-1">
-                    <div className="font-semibold text-sky-900 dark:text-sky-100">
-                      Plan Mode Active
-                    </div>
-                    <div className="mt-0.5 text-sky-700 dark:text-sky-300">
-                      Ask questions and explore changes. When ready, approve the plan to apply
-                      modifications.
-                    </div>
+                    <div className="font-semibold text-foreground">Plan Mode Active</div>
+                    <div className="mt-0.5 text-muted-foreground">{planBannerDescription}</div>
                   </div>
                   <button
                     type="button"
@@ -2173,7 +2328,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                       setPlanBannerDismissed(true);
                       writeLocalStorage(planBannerStorageKey, '1');
                     }}
-                    className="flex-shrink-0 rounded-sm p-0.5 text-sky-600 hover:bg-sky-200/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 dark:text-sky-400 dark:hover:bg-sky-800/50"
+                    className="flex-shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label="Dismiss plan mode banner"
                   >
                     <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2339,31 +2494,9 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
             <div
               className={cn(
                 'relative rounded-xl border shadow-sm backdrop-blur-sm transition-all duration-300',
-                'border-border/60 bg-background/90',
-                planModeEnabled &&
-                  'border-sky-400/60 bg-sky-50/50 dark:border-sky-500/50 dark:bg-sky-950/30'
+                'border-border/60 bg-background/90'
               )}
             >
-              {/* Plan Mode Badge - top-left overlay when active */}
-              <AnimatePresence initial={false}>
-                {planModeEnabled && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, x: -4 }}
-                    animate={{ opacity: 1, scale: 1, x: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, x: -4 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute -top-2.5 left-4 z-10"
-                  >
-                    <Badge
-                      variant="outline"
-                      className="border-sky-300/60 bg-sky-50/90 text-sky-700 dark:border-sky-600/50 dark:bg-sky-950/80 dark:text-sky-300"
-                    >
-                      <Clipboard className="h-3 w-3" aria-hidden="true" />
-                      <span>Plan Mode</span>
-                    </Badge>
-                  </motion.div>
-                )}
-              </AnimatePresence>
               {sessionError ? (
                 <div className="absolute -top-16 left-4 right-4 z-10 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/95 px-3 py-2 text-xs text-destructive-foreground shadow-sm">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
@@ -2413,7 +2546,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                   </button>
                 </div>
               ) : null}
-              {planModeEnabled && lastUserPlanModeSent ? (
+              {isCustomPlanMode && lastUserPlanModeSent ? (
                 <div className="absolute -top-4 right-4 z-20">
                   <button
                     type="button"
@@ -2458,9 +2591,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                     setCursorPosition(event.currentTarget.selectionStart || 0);
                   }}
                   placeholder={
-                    planModeEnabled
-                      ? 'Ask questions or explore changes (Plan Mode)...'
-                      : 'Ask to make changes...'
+                    inputPlaceholder
                   }
                   rows={1}
                   className="w-full resize-none overflow-y-auto bg-transparent text-sm leading-relaxed text-foreground selection:bg-primary/20 placeholder:text-muted-foreground focus:outline-none"
@@ -2527,9 +2658,16 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
               <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3">
                 <div className="flex items-center gap-2">
                   {/* Mode selector */}
-                  <Select value={agentMode} onValueChange={(v) => setAgentMode(v as 'ask' | 'plan' | 'agent')}>
-                    <SelectTrigger className="h-8 w-auto gap-1.5 rounded-md border border-border/60 bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm">
-                      <SelectValue />
+                  <Select value={uiMode} onValueChange={(value) => handleModeChange(value as UiMode)}>
+                    <SelectTrigger
+                      disabled={!canSetMode}
+                      className={`h-8 w-auto gap-1.5 rounded-md border border-border/60 px-2.5 text-xs font-medium shadow-sm ${
+                        uiMode === 'plan'
+                          ? 'bg-sky-100/70 text-sky-700 ring-1 ring-sky-500/30 hover:bg-sky-100/90 dark:bg-sky-500/15 dark:text-sky-200 dark:hover:bg-sky-500/20'
+                          : 'bg-background/90 text-foreground'
+                      }`}
+                    >
+                      <SelectValue placeholder="Mode" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ask">
@@ -2581,19 +2719,6 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
                       )}
                     </SelectContent>
                   </Select>
-                  <button
-                    type="button"
-                    onClick={() => setPlanModeEnabled((prev) => !prev)}
-                    aria-pressed={planModeEnabled}
-                    title={planModeEnabled ? 'Plan mode: read-only' : 'Full access'}
-                    className={`flex h-8 items-center justify-center rounded-md px-2 text-muted-foreground transition ${
-                      planModeEnabled
-                        ? 'bg-sky-100/70 text-sky-700 hover:bg-sky-100/90 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/15'
-                        : 'bg-transparent hover:bg-muted/40 hover:text-foreground'
-                    }`}
-                  >
-                    <Clipboard className="h-4 w-4" />
-                  </button>
                   {showThinkingBudget ? (
                     <button
                       type="button"
