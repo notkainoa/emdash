@@ -37,6 +37,7 @@ import {
   DEFAULT_THINKING_BUDGET,
   EFFORT_LABELS,
   EFFORT_ORDER,
+  getCodexBudgetLevels,
   isThinkingBudgetLevel,
   normalizeAcpDefaults,
   type AcpDefaults,
@@ -1280,6 +1281,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
 
   const canSend = input.trim().length > 0 || attachments.length > 0;
   const canSetMode = Boolean(sessionId);
+  const isStaticProvider = provider === 'claude' || provider === 'codex';
   const modelConfigOption = useMemo(() => findModelConfigOption(configOptions), [configOptions]);
   const modelConfigId = useMemo(() => getConfigOptionId(modelConfigOption), [modelConfigOption]);
   const modelConfigChoices = useMemo(
@@ -1292,7 +1294,21 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   );
   const configModelId =
     configModelValue !== null && configModelValue !== undefined ? String(configModelValue) : null;
+  const staticModelOptions = useMemo(
+    () =>
+      isStaticProvider
+        ? (ACP_PROVIDER_MODELS[provider as 'claude' | 'codex'] ?? [])
+        : [],
+    [isStaticProvider, provider]
+  );
   const rawModelVariants = useMemo<ModelOption[]>(() => {
+    if (isStaticProvider) {
+      return staticModelOptions.map((option) => ({
+        id: option.id,
+        label: option.label,
+        description: option.description,
+      }));
+    }
     if (modelConfigChoices.length) {
       return modelConfigChoices
         .map((choice) => {
@@ -1306,7 +1322,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
         .filter(Boolean) as ModelOption[];
     }
     return models.map(normalizeModelOption).filter(Boolean) as ModelOption[];
-  }, [modelConfigChoices, models]);
+  }, [isStaticProvider, modelConfigChoices, models, staticModelOptions]);
 
   const modelCatalog = useMemo(() => {
     const map = new Map<
@@ -1340,6 +1356,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   }, [rawModelVariants]);
 
   const modelOptions = useMemo<ModelOption[]>(() => {
+    if (isStaticProvider) return staticModelOptions;
     const dynamicModels = Array.from(modelCatalog.values()).map((entry) => ({
       id: entry.baseId,
       label: entry.label,
@@ -1351,10 +1368,8 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       if (formatted.length > 0) return formatted;
     }
 
-    // Use dynamic models if available, otherwise fall back to static
-    const fallback = ACP_PROVIDER_MODELS[provider as 'claude' | 'codex'] ?? ACP_PROVIDER_MODELS.codex;
-    return dynamicModels.length > 0 ? dynamicModels : fallback;
-  }, [modelCatalog, provider]);
+    return dynamicModels;
+  }, [isStaticProvider, modelCatalog, staticModelOptions]);
 
   const rawSelectedModelId = configModelId ?? currentModelId ?? (modelId ? String(modelId) : null);
   const selectedModelParts = splitModelId(rawSelectedModelId, null);
@@ -1372,6 +1387,15 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   const persistedModelValue =
     resolvedModelValue || selectedBaseId || modelId || currentModelId || '';
   const canSetModel = Boolean(sessionId);
+  const staticCodexBudgets = useMemo(
+    () =>
+      provider === 'codex'
+        ? getCodexBudgetLevels(
+            selectedBaseId || resolvedModelValue || modelOptions[0]?.id || modelId
+          )
+        : [],
+    [modelId, modelOptions, provider, resolvedModelValue, selectedBaseId]
+  );
   const thinkingConfigOption = useMemo(
     () => findThinkingConfigOption(configOptions),
     [configOptions]
@@ -1393,6 +1417,9 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     provider === 'codex' || provider === 'claude' || Boolean(thinkingConfigId);
   const fallbackThinkingConfigId = showThinkingBudget ? 'model_reasoning_effort' : null;
   const availableBudgetLevels = useMemo(() => {
+    if (provider === 'codex') {
+      return staticCodexBudgets.length ? staticCodexBudgets : ['low', 'medium', 'high'];
+    }
     if (thinkingConfigMapping.availableLevels.size) {
       return EFFORT_ORDER.filter((level) => thinkingConfigMapping.availableLevels.has(level));
     }
@@ -1405,7 +1432,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
       return EFFORT_ORDER.filter((level) => normalized.has(level));
     }
     return ['low', 'medium', 'high'] as ThinkingBudgetLevel[];
-  }, [selectedEfforts, thinkingConfigMapping.availableLevels]);
+  }, [provider, selectedEfforts, staticCodexBudgets, thinkingConfigMapping.availableLevels]);
   const resolvedBudget: ThinkingBudgetLevel =
     configDrivenBudget ??
     modelDrivenBudget ??

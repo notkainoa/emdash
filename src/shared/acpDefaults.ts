@@ -22,6 +22,17 @@ export const EFFORT_LABELS: Record<ThinkingBudgetLevel, string> = {
 
 export const DEFAULT_THINKING_BUDGET: ThinkingBudgetLevel = 'medium';
 
+export const CODEX_MODEL_BUDGETS: Record<string, ThinkingBudgetLevel[]> = {
+  'gpt-5.2-codex': ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  'gpt-5.2': ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  'gpt-5.1-codex-mini': ['minimal', 'low', 'medium', 'high'],
+};
+
+export const getCodexBudgetLevels = (modelId?: string | null): ThinkingBudgetLevel[] => {
+  if (!modelId) return ['low', 'medium', 'high'];
+  return CODEX_MODEL_BUDGETS[modelId] ?? ['low', 'medium', 'high'];
+};
+
 export interface AcpDefaults {
   claude: {
     mode: AcpUiMode;

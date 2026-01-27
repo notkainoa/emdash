@@ -3,7 +3,7 @@ import { Brain, Infinity, Map as MapIcon, MessageSquare } from 'lucide-react';
 import {
   DEFAULT_ACP_DEFAULTS,
   EFFORT_LABELS,
-  EFFORT_ORDER,
+  getCodexBudgetLevels,
   normalizeAcpDefaults,
   type AcpDefaults,
   type AcpUiMode,
@@ -14,10 +14,14 @@ import claudeLogo from '../../assets/images/claude.png';
 import OpenAIIcon from './OpenAIIcon';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
-const nextBudgetLevel = (current: ThinkingBudgetLevel): ThinkingBudgetLevel => {
-  const idx = EFFORT_ORDER.indexOf(current);
-  const nextIndex = idx < 0 ? 0 : (idx + 1) % EFFORT_ORDER.length;
-  return EFFORT_ORDER[nextIndex] ?? EFFORT_ORDER[0];
+const nextBudgetLevel = (
+  current: ThinkingBudgetLevel,
+  available: ThinkingBudgetLevel[]
+): ThinkingBudgetLevel => {
+  if (!available.length) return current;
+  const idx = available.indexOf(current);
+  const nextIndex = idx < 0 ? 0 : (idx + 1) % available.length;
+  return available[nextIndex] ?? available[0];
 };
 
 const AcpDefaultsSettingsCard: React.FC = () => {
@@ -101,9 +105,17 @@ const AcpDefaultsSettingsCard: React.FC = () => {
     updateDefaults(next, { claude: { ultrathink: nextValue } } as Partial<AcpDefaults>);
   };
 
+  const codexBudgetOptions = useMemo(
+    () => getCodexBudgetLevels(defaults.codex.modelId),
+    [defaults.codex.modelId]
+  );
+  const resolvedCodexBudget = codexBudgetOptions.includes(defaults.codex.thinkingBudget)
+    ? defaults.codex.thinkingBudget
+    : (codexBudgetOptions[0] ?? defaults.codex.thinkingBudget);
+
   const cycleCodexBudget = () => {
     if (loading || saving) return;
-    const nextValue = nextBudgetLevel(defaults.codex.thinkingBudget);
+    const nextValue = nextBudgetLevel(resolvedCodexBudget, codexBudgetOptions);
     const next: AcpDefaults = {
       ...defaults,
       codex: {
@@ -114,9 +126,9 @@ const AcpDefaultsSettingsCard: React.FC = () => {
     updateDefaults(next, { codex: { thinkingBudget: nextValue } } as Partial<AcpDefaults>);
   };
 
-  const codexBudgetLabel = EFFORT_LABELS[defaults.codex.thinkingBudget];
-  const dotCount = EFFORT_ORDER.length;
-  const activeBudgetIndex = Math.max(0, EFFORT_ORDER.indexOf(defaults.codex.thinkingBudget));
+  const codexBudgetLabel = EFFORT_LABELS[resolvedCodexBudget];
+  const dotCount = Math.max(1, codexBudgetOptions.length);
+  const activeBudgetIndex = Math.max(0, codexBudgetOptions.indexOf(resolvedCodexBudget));
   const dotSize = dotCount >= 4 ? 3 : 4;
   const dotGap = dotCount >= 4 ? 2 : 3;
   const disabled = loading || saving;
@@ -250,12 +262,19 @@ const AcpDefaultsSettingsCard: React.FC = () => {
 
             <Select
               value={defaults.codex.modelId}
-              onValueChange={(value) =>
+              onValueChange={(value) => {
+                const nextBudgetOptions = getCodexBudgetLevels(value);
+                const nextBudget = nextBudgetOptions.includes(defaults.codex.thinkingBudget)
+                  ? defaults.codex.thinkingBudget
+                  : (nextBudgetOptions[0] ?? defaults.codex.thinkingBudget);
                 updateDefaults(
-                  { ...defaults, codex: { ...defaults.codex, modelId: value } },
-                  { codex: { modelId: value } }
-                )
-              }
+                  {
+                    ...defaults,
+                    codex: { ...defaults.codex, modelId: value, thinkingBudget: nextBudget },
+                  },
+                  { codex: { modelId: value, thinkingBudget: nextBudget } }
+                );
+              }}
             >
               <SelectTrigger
                 disabled={disabled}
