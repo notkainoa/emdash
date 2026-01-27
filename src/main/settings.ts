@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { ProviderId } from '@shared/providers/registry';
 import { isValidProviderId } from '@shared/providers/registry';
+import { DEFAULT_ACP_DEFAULTS, normalizeAcpDefaults, type AcpDefaults } from '@shared/acpDefaults';
 
 const DEFAULT_PROVIDER_ID: ProviderId = 'claude';
 
@@ -33,6 +34,9 @@ export interface AppSettings {
   };
   chatUi?: {
     enabled: boolean;
+  };
+  acp?: {
+    defaults?: AcpDefaults;
   };
   defaultProvider?: ProviderId;
   tasks?: {
@@ -68,6 +72,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   chatUi: {
     enabled: true,
+  },
+  acp: {
+    defaults: DEFAULT_ACP_DEFAULTS,
   },
   defaultProvider: DEFAULT_PROVIDER_ID,
   tasks: {
@@ -169,6 +176,9 @@ function normalizeSettings(input: AppSettings): AppSettings {
     chatUi: {
       enabled: DEFAULT_SETTINGS.chatUi!.enabled,
     },
+    acp: {
+      defaults: normalizeAcpDefaults(DEFAULT_SETTINGS.acp?.defaults),
+    },
   };
 
   // Repository
@@ -216,6 +226,11 @@ function normalizeSettings(input: AppSettings): AppSettings {
   const chatUi = (input as any)?.chatUi || {};
   out.chatUi = {
     enabled: Boolean(chatUi?.enabled ?? DEFAULT_SETTINGS.chatUi!.enabled),
+  };
+
+  const acp = (input as any)?.acp || {};
+  out.acp = {
+    defaults: normalizeAcpDefaults(acp?.defaults),
   };
 
   // Default provider

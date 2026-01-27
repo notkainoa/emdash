@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { getMentionKeyAction } from '../lib/fileMentions';
 import claudeLogo from '../../assets/images/claude.png';
+import OpenAIIcon from './OpenAIIcon';
 import { useFileMentions } from '../hooks/useFileMentions';
 import FileMentionDropdown from './FileMentionDropdown';
 import { Task } from '../types/chat';
@@ -31,20 +32,19 @@ import { type Provider } from '../types';
 import InstallBanner from './InstallBanner';
 import { Button } from './ui/button';
 import { getInstallCommandForProvider } from '@shared/providers/registry';
+import {
+  DEFAULT_ACP_DEFAULTS,
+  DEFAULT_THINKING_BUDGET,
+  EFFORT_LABELS,
+  EFFORT_ORDER,
+  isThinkingBudgetLevel,
+  normalizeAcpDefaults,
+  type AcpDefaults,
+  type ThinkingBudgetLevel,
+} from '@shared/acpDefaults';
+import { ACP_PROVIDER_MODELS, type AcpModelOption } from '@shared/acpModels';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Spinner } from './ui/spinner';
-
-// OpenAI logo SVG component
-const OpenAIIcon: React.FC<{ className?: string }> = ({ className = '' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    className={className}
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
-  </svg>
-);
 
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -159,11 +159,7 @@ type ConfigChoice = {
   description?: string;
 };
 
-type ModelOption = {
-  id: string;
-  label: string;
-  description?: string;
-};
+type ModelOption = AcpModelOption;
 
 type ModeOption = {
   id: string;
@@ -173,38 +169,10 @@ type ModeOption = {
 
 type UiMode = 'ask' | 'plan' | 'agent';
 
-// Static models for instant loading (no waiting for IPC)
-const PROVIDER_MODELS: Record<string, ModelOption[]> = {
-  codex: [
-    { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-    { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
-    { id: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini' },
-    { id: 'gpt-5.2', label: 'GPT-5.2' },
-  ],
-  claude: [
-    { id: 'claude-opus-4-5', label: 'Opus 4.5' },
-    { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
-  ],
-};
-
 type ModelVariant = ModelOption & {
   baseId: string;
   effort?: string | null;
 };
-
-type ThinkingBudgetLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-
-const EFFORT_ORDER: ThinkingBudgetLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-const EFFORT_LABELS: Record<ThinkingBudgetLevel, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'Extra High',
-};
-const DEFAULT_THINKING_BUDGET: ThinkingBudgetLevel = 'medium';
-const isThinkingBudgetLevel = (value: string): value is ThinkingBudgetLevel =>
-  EFFORT_ORDER.includes(value as ThinkingBudgetLevel);
 
 const flattenConfigChoices = (choices: any[]): any[] => {
   const flat: any[] = [];
@@ -585,8 +553,10 @@ const AcpChatInterface: React.FC<Props> = ({
   const [input, setInput] = useState('');
   const [showPlan, setShowPlan] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
-  const [modelId, setModelId] = useState<string>(
-    provider === 'claude' ? 'claude-opus-4-5' : 'gpt-5.2-codex'
+  const [modelId, setModelId] = useState<string>(() =>
+    provider === 'claude'
+      ? DEFAULT_ACP_DEFAULTS.claude.modelId
+      : DEFAULT_ACP_DEFAULTS.codex.modelId
   );
   const [planModePromptSent, setPlanModePromptSent] = useState(false);
   const [lastUserPlanModeSent, setLastUserPlanModeSent] = useState(false);
@@ -652,6 +622,9 @@ const AcpChatInterface: React.FC<Props> = ({
   }, [matchesCurrentMode, planModeEnabled, provider]);
   const isPlanMode = uiMode === 'plan';
   const isCustomPlanMode = provider === 'codex' && planModeEnabled;
+  const [acpDefaults, setAcpDefaults] = useState<AcpDefaults | null>(null);
+  const defaultsLoaded = acpDefaults !== null;
+  const resolvedDefaults = acpDefaults ?? DEFAULT_ACP_DEFAULTS;
   const [thinkingBudget, setThinkingBudget] =
     useState<ThinkingBudgetLevel>(DEFAULT_THINKING_BUDGET);
   const [isUltrathink, setIsUltrathink] = useState(false);
@@ -666,6 +639,9 @@ const AcpChatInterface: React.FC<Props> = ({
   const persistedModelRef = useRef<string | null>(null);
   const persistedThinkingBudgetRef = useRef<ThinkingBudgetLevel | null>(null);
   const didRestorePreferencesRef = useRef<string | null>(null);
+  const didSetInitialModeRef = useRef<string | null>(null);
+  const didSetInitialThinkingRef = useRef<string | null>(null);
+  const didSetInitialModelRef = useRef<string | null>(null);
   const hasMessagesRef = useRef(false);
   const isPinnedToBottomRef = useRef(true);
   const lastFeedLengthRef = useRef(0);
@@ -688,6 +664,32 @@ const AcpChatInterface: React.FC<Props> = ({
     isPinnedToBottomRef.current = true;
     forceScrollRef.current = false;
   }, [task.id, provider]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await window.electronAPI.getSettings();
+        if (cancelled) return;
+        if (result?.success) {
+          setAcpDefaults(normalizeAcpDefaults(result.settings?.acp?.defaults));
+        } else {
+          setAcpDefaults(DEFAULT_ACP_DEFAULTS);
+        }
+      } catch {
+        if (!cancelled) setAcpDefaults(DEFAULT_ACP_DEFAULTS);
+      }
+    })();
+
+    const off = window.electronAPI.onSettingsUpdated?.((settings: any) => {
+      setAcpDefaults(normalizeAcpDefaults(settings?.acp?.defaults));
+    });
+
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
 
   // Track cursor position for mention detection
   const [cursorPosition, setCursorPosition] = useState(0);
@@ -1350,7 +1352,7 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     }
 
     // Use dynamic models if available, otherwise fall back to static
-    const fallback = PROVIDER_MODELS[provider] ?? PROVIDER_MODELS.codex ?? [];
+    const fallback = ACP_PROVIDER_MODELS[provider as 'claude' | 'codex'] ?? ACP_PROVIDER_MODELS.codex;
     return dynamicModels.length > 0 ? dynamicModels : fallback;
   }, [modelCatalog, provider]);
 
@@ -1470,6 +1472,26 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     ]
   );
 
+  useEffect(() => {
+    if (!defaultsLoaded || !sessionId || !historyReady || historyHasMessages) return;
+    if (didSetInitialModeRef.current === sessionId) return;
+    didSetInitialModeRef.current = sessionId;
+    const desiredMode: UiMode =
+      provider === 'codex' ? resolvedDefaults.codex.mode : resolvedDefaults.claude.mode;
+    if (uiMode === desiredMode) return;
+    handleModeChange(desiredMode);
+  }, [
+    defaultsLoaded,
+    handleModeChange,
+    historyHasMessages,
+    historyReady,
+    provider,
+    resolvedDefaults.claude.mode,
+    resolvedDefaults.codex.mode,
+    sessionId,
+    uiMode,
+  ]);
+
   const handleModelChange = useCallback(
     (value: string) => {
       setModelId(value);
@@ -1518,6 +1540,41 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
   );
 
   useEffect(() => {
+    if (!defaultsLoaded || !sessionId || !historyReady || historyHasMessages) return;
+    if (didSetInitialModelRef.current === sessionId) return;
+    if (!modelOptions.length) return;
+
+    const desiredModelId =
+      provider === 'codex' ? resolvedDefaults.codex.modelId : resolvedDefaults.claude.modelId;
+    const hasDesired = modelOptions.some((option) => option.id === desiredModelId);
+    const targetModelId = hasDesired ? desiredModelId : modelOptions[0]?.id;
+
+    if (!targetModelId) {
+      didSetInitialModelRef.current = sessionId;
+      return;
+    }
+
+    if (resolvedModelValue === targetModelId) {
+      didSetInitialModelRef.current = sessionId;
+      return;
+    }
+
+    handleModelChange(targetModelId);
+    didSetInitialModelRef.current = sessionId;
+  }, [
+    defaultsLoaded,
+    handleModelChange,
+    historyHasMessages,
+    historyReady,
+    modelOptions,
+    provider,
+    resolvedDefaults.claude.modelId,
+    resolvedDefaults.codex.modelId,
+    resolvedModelValue,
+    sessionId,
+  ]);
+
+  useEffect(() => {
     if (persistedModelValue) {
       persistedModelRef.current = persistedModelValue;
     }
@@ -1548,6 +1605,98 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     };
   }, [isUltrathink, modelStorageKey, provider, thinkingStorageKey, showThinkingBudget]);
 
+  const applyThinkingBudgetLevel = useCallback(
+    (next: ThinkingBudgetLevel, options?: { persist?: boolean; apply?: boolean }) => {
+      const persist = options?.persist ?? true;
+      const apply = options?.apply ?? true;
+
+      setThinkingBudget(next);
+      if (persist) {
+        writeLocalStorage(thinkingStorageKey, next);
+      }
+
+      if (!apply || !canSetThinkingBudget) return;
+
+      if (thinkingConfigId) {
+        const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
+        const targetValue = targetChoice?.value ?? next;
+        if (targetValue === undefined) {
+          uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
+          return;
+        }
+        void sessionActions
+          .setConfigOption(thinkingConfigId, targetValue, { optimistic: true })
+          .then((res) => {
+            if (!res?.success) {
+              uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
+            }
+          });
+        return;
+      }
+
+      if (selectedModelEntry && selectedModelEntry.variants.length) {
+        const desiredEffort = chooseEffortForBudget(next, selectedModelEntry.efforts);
+        const targetVariant =
+          selectedModelEntry.variants.find((variant) => variant.effort === desiredEffort) ??
+          selectedModelEntry.variants[0];
+        if (!targetVariant) return;
+        void sessionActions.setModel(targetVariant.id, { optimistic: true }).then((res) => {
+          if (!res?.success) {
+            uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
+          }
+        });
+        return;
+      }
+
+      const configId = fallbackThinkingConfigId;
+      if (!configId) return;
+      const targetValue = next;
+      void sessionActions.setConfigOption(configId, targetValue, { optimistic: true }).then((res) => {
+        if (!res?.success) {
+          uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
+        }
+      });
+    },
+    [
+      canSetThinkingBudget,
+      fallbackThinkingConfigId,
+      selectedModelEntry,
+      sessionActions,
+      thinkingConfigId,
+      thinkingConfigMapping.budgetToChoice,
+      thinkingStorageKey,
+      uiLog,
+    ]
+  );
+
+  useEffect(() => {
+    if (!defaultsLoaded || !sessionId || !historyReady || historyHasMessages) return;
+    if (didSetInitialThinkingRef.current === sessionId) return;
+
+    if (provider === 'claude') {
+      setIsUltrathink(resolvedDefaults.claude.ultrathink);
+      didSetInitialThinkingRef.current = sessionId;
+      return;
+    }
+
+    const nextBudget = resolvedDefaults.codex.thinkingBudget ?? DEFAULT_THINKING_BUDGET;
+    const shouldApply = canSetThinkingBudget;
+    applyThinkingBudgetLevel(nextBudget, { persist: false, apply: shouldApply });
+    if (shouldApply) {
+      didSetInitialThinkingRef.current = sessionId;
+    }
+  }, [
+    applyThinkingBudgetLevel,
+    canSetThinkingBudget,
+    defaultsLoaded,
+    historyHasMessages,
+    historyReady,
+    provider,
+    resolvedDefaults.claude.ultrathink,
+    resolvedDefaults.codex.thinkingBudget,
+    sessionId,
+  ]);
+
   const handleThinkingBudgetClick = useCallback(() => {
     if (!showThinkingBudget) return;
 
@@ -1559,63 +1708,15 @@ You may optionally share your plan structure using the ACP plan protocol (sessio
     }
 
     const next = nextBudgetLevel(activeBudgetLevel, availableBudgetLevels);
-    setThinkingBudget(next);
-    writeLocalStorage(thinkingStorageKey, next);
-
-    if (!canSetThinkingBudget) return;
-    if (thinkingConfigId) {
-      const targetChoice = thinkingConfigMapping.budgetToChoice.get(next);
-      const targetValue = targetChoice?.value ?? next;
-      if (targetValue === undefined) {
-        uiLog('thinkingBudget:missingOption', { next, configId: thinkingConfigId });
-        return;
-      }
-      void sessionActions
-        .setConfigOption(thinkingConfigId, targetValue, { optimistic: true })
-        .then((res) => {
-          if (!res?.success) {
-            uiLog('thinkingBudget:setFailed', { configId: thinkingConfigId, error: res?.error });
-          }
-        });
-      return;
-    }
-
-    if (selectedModelEntry && selectedModelEntry.variants.length) {
-      const desiredEffort = chooseEffortForBudget(next, selectedModelEntry.efforts);
-      const targetVariant =
-        selectedModelEntry.variants.find((variant) => variant.effort === desiredEffort) ??
-        selectedModelEntry.variants[0];
-      if (!targetVariant) return;
-      void sessionActions.setModel(targetVariant.id, { optimistic: true }).then((res) => {
-        if (!res?.success) {
-          uiLog('thinkingBudget:setFailed', { modelId: targetVariant.id, error: res?.error });
-        }
-      });
-      return;
-    }
-
-    const configId = fallbackThinkingConfigId;
-    if (!configId) return;
-    const targetValue = next;
-    void sessionActions.setConfigOption(configId, targetValue, { optimistic: true }).then((res) => {
-      if (!res?.success) {
-        uiLog('thinkingBudget:setFailed', { configId, error: res?.error });
-      }
-    });
+    applyThinkingBudgetLevel(next);
   }, [
     activeBudgetLevel,
     availableBudgetLevels,
-    canSetThinkingBudget,
-    fallbackThinkingConfigId,
     isUltrathink,
+    applyThinkingBudgetLevel,
     provider,
-    selectedModelEntry,
-    sessionActions,
     showThinkingBudget,
-    thinkingConfigId,
-    thinkingConfigMapping.budgetToChoice,
     thinkingStorageKey,
-    uiLog,
   ]);
 
   const handleCopyMessage = useCallback(

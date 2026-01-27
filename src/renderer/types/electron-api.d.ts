@@ -1,6 +1,7 @@
 // Updated for Codex integration
 import type { ResolvedContainerConfig, RunnerEvent, RunnerMode } from '../../shared/container';
 import type { ProviderId } from '../../shared/providers/registry';
+import type { AcpDefaults } from '../../shared/acpDefaults';
 
 type ProjectSettingsPayload = {
   projectId: string;
@@ -52,6 +53,9 @@ declare global {
           chatUi?: {
             enabled: boolean;
           };
+          acp?: {
+            defaults?: AcpDefaults;
+          };
           defaultProvider?: string;
           tasks?: {
             autoGenerateName: boolean;
@@ -78,6 +82,9 @@ declare global {
           chatUi: {
             enabled?: boolean;
           };
+          acp?: {
+            defaults?: Partial<AcpDefaults>;
+          };
           defaultProvider?: string;
           tasks?: {
             autoGenerateName?: boolean;
@@ -102,6 +109,9 @@ declare global {
           };
           chatUi?: {
             enabled: boolean;
+          };
+          acp?: {
+            defaults?: AcpDefaults;
           };
           defaultProvider?: string;
           tasks?: {

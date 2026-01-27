@@ -17,6 +17,7 @@ import Context7SettingsCard from './Context7SettingsCard';
 import DefaultProviderSettingsCard from './DefaultProviderSettingsCard';
 import TaskSettingsCard from './TaskSettingsCard';
 import ChatUiSettingsCard from './ChatUiSettingsCard';
+import AcpDefaultsSettingsCard from './AcpDefaultsSettingsCard';
 import AcpCommandsSettingsCard from './AcpCommandsSettingsCard';
 import { CliProviderStatus } from '../types/connections';
 import { Separator } from './ui/separator';
@@ -222,6 +223,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         title: 'Agent Client Protocol (ACP)',
         sections: [
           { title: 'Chat UI (ACP)', render: () => <ChatUiSettingsCard /> },
+          { title: 'Defaults', render: () => <AcpDefaultsSettingsCard /> },
           { title: 'Slash commands', render: () => <AcpCommandsSettingsCard /> },
         ],
       },
